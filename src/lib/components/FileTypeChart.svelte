@@ -134,7 +134,7 @@
 
 		if (sortedData.length === 0) return;
 
-		const margin = { top: 10, right: 60, bottom: 20, left: 80 };
+		const margin = { top: 10, right: 60, bottom: 20, left: 100 };
 		const innerWidth = actualWidth - margin.left - margin.right;
 		const innerHeight = height - margin.top - margin.bottom;
 
@@ -257,12 +257,17 @@
 		yAxis
 			.selectAll('.tick')
 			.insert('rect', 'text')
-			.attr('x', -12)
+			.attr('x', -76)
 			.attr('y', -4)
 			.attr('width', 8)
 			.attr('height', 8)
 			.attr('rx', 2)
 			.attr('fill', (d) => getLanguageColor(String(d)));
+		
+		// Shift text labels to make room for color indicator
+		yAxis
+			.selectAll('text')
+			.attr('x', -16);
 	}
 
 	const chartAttachment: Attachment = (container) => {

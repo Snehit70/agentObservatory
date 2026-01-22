@@ -1,6 +1,6 @@
 import { query } from '$app/server';
 import { db } from '$lib/server/db';
-import { resolveCostUsd } from '$lib/server/model-pricing';
+import { resolveCostUsd, normalizeModelId, getModelDisplayName } from '$lib/server/model-pricing';
 import { requests, dailySummary, toolCalls, fileEdits } from '$lib/db/schema';
 import { desc, sql, sum, count, avg, eq, isNotNull } from 'drizzle-orm';
 import * as v from 'valibot';
@@ -87,7 +87,7 @@ export const getVelocity = query(async () => {
 	};
 });
 
-// Cost by model query
+// Cost by model query - aggregated by normalized model name
 export const getCostByModel = query(async () => {
 	const result = await db
 		.select({
@@ -104,12 +104,17 @@ export const getCostByModel = query(async () => {
 		.from(requests)
 		.groupBy(requests.modelId, requests.providerId);
 
-	const mapped = result.map((r) => ({
+	// First compute costs per raw model
+	const rawMapped = result.map((r) => ({
 		model_id: r.model_id,
-		provider_id: r.provider_id,
+		normalized_model: normalizeModelId(r.model_id ?? ''),
+		display_name: getModelDisplayName(r.model_id ?? ''),
 		request_count: Number(r.request_count),
 		tokens_input: Number(r.tokens_input ?? 0),
 		tokens_output: Number(r.tokens_output ?? 0),
+		tokens_reasoning: Number(r.tokens_reasoning ?? 0),
+		tokens_cache_read: Number(r.tokens_cache_read ?? 0),
+		tokens_cache_write: Number(r.tokens_cache_write ?? 0),
 		cost_usd: resolveCostUsd({
 			costUsd: Number(r.cost_usd ?? 0),
 			providerId: r.provider_id,
@@ -122,7 +127,37 @@ export const getCostByModel = query(async () => {
 		})
 	}));
 
-	return mapped.sort((a, b) => b.cost_usd - a.cost_usd);
+	// Aggregate by normalized model name
+	const aggregated = new Map<string, {
+		model_id: string;
+		display_name: string;
+		request_count: number;
+		tokens_input: number;
+		tokens_output: number;
+		cost_usd: number;
+	}>();
+
+	for (const r of rawMapped) {
+		const key = r.normalized_model;
+		const existing = aggregated.get(key);
+		if (existing) {
+			existing.request_count += r.request_count;
+			existing.tokens_input += r.tokens_input;
+			existing.tokens_output += r.tokens_output;
+			existing.cost_usd += r.cost_usd;
+		} else {
+			aggregated.set(key, {
+				model_id: r.normalized_model,
+				display_name: r.display_name,
+				request_count: r.request_count,
+				tokens_input: r.tokens_input,
+				tokens_output: r.tokens_output,
+				cost_usd: r.cost_usd
+			});
+		}
+	}
+
+	return Array.from(aggregated.values()).sort((a, b) => b.cost_usd - a.cost_usd);
 });
 
 // Cost over time (last 30 days)
@@ -271,24 +306,51 @@ export const getAgentBreakdown = query(async () => {
 	return Array.from(totals.values()).sort((a, b) => b.cost_usd - a.cost_usd);
 });
 
-// Model performance (avg duration)
+// Model performance (avg duration) - aggregated by normalized model
 export const getModelPerformance = query(async () => {
 	const result = await db
 		.select({
 			model_id: requests.modelId,
-			avg_duration_ms: avg(requests.durationMs),
-			request_count: count()
+			duration_ms: requests.durationMs,
 		})
 		.from(requests)
-		.where(sql`${requests.durationMs} IS NOT NULL`)
-		.groupBy(requests.modelId)
-		.orderBy(desc(avg(requests.durationMs)));
+		.where(sql`${requests.durationMs} IS NOT NULL`);
 
-	return result.map((r) => ({
-		model_id: r.model_id,
-		avg_duration_ms: Number(r.avg_duration_ms ?? 0),
-		request_count: Number(r.request_count)
-	}));
+	// Aggregate by normalized model
+	const aggregated = new Map<string, {
+		model_id: string;
+		display_name: string;
+		total_duration: number;
+		request_count: number;
+	}>();
+
+	for (const r of result) {
+		const normalized = normalizeModelId(r.model_id ?? '');
+		const displayName = getModelDisplayName(r.model_id ?? '');
+		const duration = Number(r.duration_ms ?? 0);
+		
+		const existing = aggregated.get(normalized);
+		if (existing) {
+			existing.total_duration += duration;
+			existing.request_count += 1;
+		} else {
+			aggregated.set(normalized, {
+				model_id: normalized,
+				display_name: displayName,
+				total_duration: duration,
+				request_count: 1
+			});
+		}
+	}
+
+	return Array.from(aggregated.values())
+		.map(r => ({
+			model_id: r.model_id,
+			display_name: r.display_name,
+			avg_duration_ms: r.request_count > 0 ? r.total_duration / r.request_count : 0,
+			request_count: r.request_count
+		}))
+		.sort((a, b) => b.avg_duration_ms - a.avg_duration_ms);
 });
 
 // Recent requests
@@ -312,6 +374,7 @@ export const getRecentRequests = query(async () => {
 	return result.map((r) => ({
 		id: r.id,
 		model_id: r.model_id,
+		display_name: getModelDisplayName(r.model_id ?? ''),
 		tokens_input: Number(r.tokens_input ?? 0),
 		tokens_output: Number(r.tokens_output ?? 0),
 		tokens_cache_read: Number(r.tokens_cache_read ?? 0),

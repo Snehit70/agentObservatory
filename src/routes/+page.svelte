@@ -30,7 +30,7 @@
 	};
 	type CostByModelItem = {
 		model_id: string;
-		provider_id: string;
+		display_name: string;
 		request_count: number;
 		tokens_input: number;
 		tokens_output: number;
@@ -56,12 +56,14 @@
 	};
 	type ModelPerformanceItem = {
 		model_id: string;
+		display_name: string;
 		avg_duration_ms: number;
 		request_count: number;
 	};
 	type RecentRequestItem = {
 		id: number;
 		model_id: string;
+		display_name: string;
 		tokens_input: number;
 		tokens_output: number;
 		tokens_cache_read: number;
@@ -295,7 +297,7 @@
 		const items = costByModel ?? [];
 		const topItems = items.slice(0, modelCostLimit);
 		const topData = topItems.map((d) => ({
-			label: getModelShortName(d.model_id),
+			label: d.display_name,
 			value: d.cost_usd
 		}));
 		const totalCost = items.reduce((sum, d) => sum + d.cost_usd, 0);
@@ -614,12 +616,11 @@
 						</tr>
 					</thead>
 					<tbody>
-						{#each costByModel as model (`${model.provider_id}/${model.model_id}`)}
+						{#each costByModel as model (model.model_id)}
 							{@const avgDuration = modelPerformance?.find((d) => d.model_id === model.model_id)}
 							<tr>
 								<td class="font-mono text-sm">
-									<span class="provider-badge">{model.provider_id}</span>
-									{getModelShortName(model.model_id)}
+									{model.display_name}
 								</td>
 								<td>{model.request_count.toLocaleString()}</td>
 								<td class="text-accent">{formatNumber(model.tokens_input)}</td>
@@ -668,7 +669,7 @@
 										minute: '2-digit'
 									})}
 								</td>
-								<td class="font-mono text-sm">{getModelShortName(req.model_id)}</td>
+								<td class="font-mono text-sm">{req.display_name}</td>
 								<td class="text-accent">{formatNumber(req.tokens_input)}</td>
 								<td class="text-primary">{formatNumber(req.tokens_output)}</td>
 								<td class="text-secondary">{formatNumber(req.tokens_cache_read)}</td>

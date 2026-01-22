@@ -28,31 +28,51 @@ const pricingByProviderModel = Object.entries(modelsDevData).reduce(
 );
 
 const FALLBACK_COSTS: Record<string, ModelCost> = {
+	// Claude 4.5 (verified Jan 2026)
 	'claude-opus-4.5': { input: 5, output: 25, cache_read: 0.5, cache_write: 6.25 },
 	'claude-opus-4-5': { input: 5, output: 25, cache_read: 0.5, cache_write: 6.25 },
 	'claude-sonnet-4.5': { input: 3, output: 15, cache_read: 0.3, cache_write: 3.75 },
 	'claude-sonnet-4-5': { input: 3, output: 15, cache_read: 0.3, cache_write: 3.75 },
 	'claude-haiku-4.5': { input: 1, output: 5, cache_read: 0.1, cache_write: 1.25 },
 	'claude-haiku-4-5': { input: 1, output: 5, cache_read: 0.1, cache_write: 1.25 },
+	// Gemini 3 (verified Jan 2026)
 	'gemini-3-pro': { input: 2, output: 12, cache_read: 0.2 },
 	'gemini-3-flash': { input: 0.5, output: 3, cache_read: 0.05 },
+	// Gemini 2.5 (verified)
 	'gemini-2.5-pro': { input: 1.25, output: 10 },
 	'gemini-2.5-flash': { input: 0.3, output: 2.5 },
-	'gpt-5.2': { input: 3, output: 12 },
-	'gpt-5.1': { input: 3, output: 12 },
-	'gpt-4o': { input: 3, output: 10 },
-	'grok-code': { input: 3, output: 15 },
-	'grok-3': { input: 3, output: 15 }
+	// OpenAI GPT-5 (verified Jan 2026)
+	'gpt-5': { input: 1.25, output: 10 },
+	'gpt-5.2': { input: 1.25, output: 10 },
+	'gpt-5.1': { input: 1.25, output: 10 },
+	'gpt-4o': { input: 2.5, output: 10 },
+	// xAI Grok (verified Jan 2026 - grok-code-fast pricing)
+	'grok-code': { input: 0.2, output: 1.5 },
+	'grok-code-fast': { input: 0.2, output: 1.5 },
+	'grok-3': { input: 3, output: 15 },
+	'grok': { input: 0.2, output: 1.5 },
+	// GLM-4.7 (verified Jan 2026 - Z.AI official pricing)
+	'glm-4.7-free': { input: 0.6, output: 2.2 },
+	'glm-4.7': { input: 0.6, output: 2.2 },
+	// Xiaomi MiMo-V2-Flash (verified Jan 2026 - Xiaomi official pricing)
+	'xiaomi/mimo-v2-flash:free': { input: 0.1, output: 0.3 },
+	'mimo-v2-flash': { input: 0.1, output: 0.3 },
+	'mimo': { input: 0.1, output: 0.3 },
+	// Unknown/other
+	'big-pickle': { input: 0, output: 0 }
 };
 
 const perMillion = 1_000_000;
 
-const normalizeModelId = (modelId: string): string => {
+export const normalizeModelId = (modelId: string): string => {
 	let m = modelId.toLowerCase();
 	m = m.replace(/^antigravity-/, '');
 	m = m.replace(/-thinking.*$/, '');
 	m = m.replace(/-20\d{6}$/, '');
 	m = m.replace(/-preview$/, '');
+	m = m.replace(/-high$/, '');
+	m = m.replace(/-medium$/, '');
+	m = m.replace(/-low$/, '');
 
 	if (m.includes('claude-opus-4')) return 'claude-opus-4.5';
 	if (m.includes('claude-sonnet-4')) return 'claude-sonnet-4.5';
@@ -69,13 +89,32 @@ const normalizeModelId = (modelId: string): string => {
 	return m;
 };
 
+const MODEL_DISPLAY_NAMES: Record<string, string> = {
+	'claude-opus-4.5': 'Claude Opus 4.5',
+	'claude-sonnet-4.5': 'Claude Sonnet 4.5',
+	'claude-haiku-4.5': 'Claude Haiku 4.5',
+	'gemini-3-pro': 'Gemini 3 Pro',
+	'gemini-3-flash': 'Gemini 3 Flash',
+	'gemini-2.5-pro': 'Gemini 2.5 Pro',
+	'gemini-2.5-flash': 'Gemini 2.5 Flash',
+	'gpt-5.2': 'GPT-5.2',
+	'gpt-5.1': 'GPT-5.1',
+	'gpt-4o': 'GPT-4o',
+	'grok-code': 'Grok'
+};
+
+export const getModelDisplayName = (modelId: string): string => {
+	const normalized = normalizeModelId(modelId);
+	return MODEL_DISPLAY_NAMES[normalized] || normalized;
+};
+
 const getModelCost = (providerId?: string | null, modelId?: string | null): ModelCost | null => {
 	if (!modelId) return null;
 
 	if (providerId) {
 		const exactKey = `${providerId}:${modelId}`;
 		const exact = pricingByProviderModel.get(exactKey);
-		if (exact) return exact;
+		if (exact && (exact.input || exact.output)) return exact;
 	}
 
 	const normalized = normalizeModelId(modelId);
