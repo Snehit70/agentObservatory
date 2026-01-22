@@ -1,0 +1,716 @@
+<script lang="ts">
+	import { untrack } from 'svelte';
+	import AreaChart from '$lib/components/AreaChart.svelte';
+	import BarChart from '$lib/components/BarChart.svelte';
+	import DonutChart from '$lib/components/DonutChart.svelte';
+	import TokensChart from '$lib/components/TokensChart.svelte';
+	import TokensZoomChart from '$lib/components/TokensZoomChart.svelte';
+	import {
+		getTotals,
+		getCostByModel,
+		getCostOverTime,
+		getTokensData,
+		getAgentBreakdown,
+		getModelPerformance,
+		getRecentRequests,
+		getFileTypeSummary,
+		getVelocity
+	} from '$lib/remote/stats.remote';
+	import FileTypeChart from '$lib/components/FileTypeChart.svelte';
+
+	// Types for our data
+	type Totals = {
+		total_requests: number;
+		total_input: number;
+		total_output: number;
+		total_reasoning: number;
+		total_cache_read: number;
+		total_cache_write: number;
+		total_cost: number;
+	};
+	type CostByModelItem = {
+		model_id: string;
+		provider_id: string;
+		request_count: number;
+		tokens_input: number;
+		tokens_output: number;
+		cost_usd: number;
+	};
+	type CostOverTimeItem = {
+		date: string;
+		request_count: number;
+		tokens_input: number;
+		tokens_output: number;
+		cost_usd: number;
+	};
+	type TokensData = {
+		hourly: { hour: number; tokens_input: number; tokens_output: number }[];
+		daily: { date: string; tokens_input: number; tokens_output: number }[];
+	};
+	type AgentBreakdownItem = {
+		agent: string;
+		request_count: number;
+		tokens_input: number;
+		tokens_output: number;
+		cost_usd: number;
+	};
+	type ModelPerformanceItem = {
+		model_id: string;
+		avg_duration_ms: number;
+		request_count: number;
+	};
+	type RecentRequestItem = {
+		id: number;
+		model_id: string;
+		tokens_input: number;
+		tokens_output: number;
+		tokens_cache_read: number;
+		tokens_cache_write: number;
+		cost_usd: number;
+		created_at: string;
+	};
+	type FileTypeSummaryItem = {
+		file_extension: string | null;
+		total_operations: number;
+		edit_count: number;
+		write_count: number;
+		read_count: number;
+		total_lines_added: number;
+		total_lines_removed: number;
+		net_lines: number;
+	};
+	type Velocity = {
+		active_days: number;
+		total_days_span: number;
+		total_requests: number;
+		requests_per_day: number;
+		requests_per_hour: number;
+	};
+
+	// State for all data
+	let totals = $state<Totals | null>(null);
+	let costByModel = $state<CostByModelItem[] | null>(null);
+	let costOverTime = $state<CostOverTimeItem[] | null>(null);
+	let tokensData = $state<TokensData | null>(null);
+	let agentBreakdown = $state<AgentBreakdownItem[] | null>(null);
+	let modelPerformance = $state<ModelPerformanceItem[] | null>(null);
+	let recentRequests = $state<RecentRequestItem[] | null>(null);
+	let fileTypeSummary = $state<FileTypeSummaryItem[] | null>(null);
+	let velocity = $state<Velocity | null>(null);
+
+	// Loading states
+	let totalsLoading = $state(true);
+	let costByModelLoading = $state(true);
+	let costOverTimeLoading = $state(true);
+	let tokensDataLoading = $state(true);
+	let agentBreakdownLoading = $state(true);
+	let modelPerformanceLoading = $state(true);
+	let recentRequestsLoading = $state(true);
+	let fileTypeSummaryLoading = $state(true);
+	let velocityLoading = $state(true);
+
+	// Error states
+	let totalsError = $state<Error | null>(null);
+	let costByModelError = $state<Error | null>(null);
+	let costOverTimeError = $state<Error | null>(null);
+	let tokensDataError = $state<Error | null>(null);
+	let agentBreakdownError = $state<Error | null>(null);
+	let modelPerformanceError = $state<Error | null>(null);
+	let recentRequestsError = $state<Error | null>(null);
+	let fileTypeSummaryError = $state<Error | null>(null);
+	let velocityError = $state<Error | null>(null);
+
+	let currentTime = $state(new Date().toLocaleTimeString());
+
+	// Fetch functions
+	async function fetchTotals() {
+		totalsLoading = true;
+		totalsError = null;
+		try {
+			totals = await getTotals();
+		} catch (e) {
+			totalsError = e instanceof Error ? e : new Error('Failed to load');
+		} finally {
+			totalsLoading = false;
+		}
+	}
+
+	async function fetchCostByModel() {
+		costByModelLoading = true;
+		costByModelError = null;
+		try {
+			costByModel = await getCostByModel();
+		} catch (e) {
+			costByModelError = e instanceof Error ? e : new Error('Failed to load');
+		} finally {
+			costByModelLoading = false;
+		}
+	}
+
+	async function fetchCostOverTime() {
+		costOverTimeLoading = true;
+		costOverTimeError = null;
+		try {
+			costOverTime = await getCostOverTime();
+		} catch (e) {
+			costOverTimeError = e instanceof Error ? e : new Error('Failed to load');
+		} finally {
+			costOverTimeLoading = false;
+		}
+	}
+
+	async function fetchTokensData() {
+		tokensDataLoading = true;
+		tokensDataError = null;
+		try {
+			// Pass the user's timezone offset to get hourly data in local time
+			const tzOffsetMinutes = new Date().getTimezoneOffset();
+			tokensData = await getTokensData(tzOffsetMinutes);
+		} catch (e) {
+			tokensDataError = e instanceof Error ? e : new Error('Failed to load');
+		} finally {
+			tokensDataLoading = false;
+		}
+	}
+
+	async function fetchAgentBreakdown() {
+		agentBreakdownLoading = true;
+		agentBreakdownError = null;
+		try {
+			agentBreakdown = await getAgentBreakdown();
+		} catch (e) {
+			agentBreakdownError = e instanceof Error ? e : new Error('Failed to load');
+		} finally {
+			agentBreakdownLoading = false;
+		}
+	}
+
+	async function fetchModelPerformance() {
+		modelPerformanceLoading = true;
+		modelPerformanceError = null;
+		try {
+			modelPerformance = await getModelPerformance();
+		} catch (e) {
+			modelPerformanceError = e instanceof Error ? e : new Error('Failed to load');
+		} finally {
+			modelPerformanceLoading = false;
+		}
+	}
+
+	async function fetchRecentRequests() {
+		recentRequestsLoading = true;
+		recentRequestsError = null;
+		try {
+			recentRequests = await getRecentRequests();
+		} catch (e) {
+			recentRequestsError = e instanceof Error ? e : new Error('Failed to load');
+		} finally {
+			recentRequestsLoading = false;
+		}
+	}
+
+	async function fetchFileTypeSummary() {
+		fileTypeSummaryLoading = true;
+		fileTypeSummaryError = null;
+		try {
+			fileTypeSummary = await getFileTypeSummary();
+		} catch (e) {
+			fileTypeSummaryError = e instanceof Error ? e : new Error('Failed to load');
+		} finally {
+			fileTypeSummaryLoading = false;
+		}
+	}
+
+	async function fetchVelocity() {
+		velocityLoading = true;
+		velocityError = null;
+		try {
+			velocity = await getVelocity();
+			console.log('Velocity data:', velocity);
+		} catch (e) {
+			console.error('Velocity error:', e);
+			velocityError = e instanceof Error ? e : new Error('Failed to load');
+		} finally {
+			velocityLoading = false;
+		}
+	}
+
+	function refreshAll() {
+		fetchTotals();
+		fetchCostByModel();
+		fetchCostOverTime();
+		fetchTokensData();
+		fetchAgentBreakdown();
+		fetchModelPerformance();
+		fetchRecentRequests();
+		fetchFileTypeSummary();
+		fetchVelocity();
+	}
+
+	$effect(() => {
+		untrack(() => refreshAll());
+
+		const interval = setInterval(() => {
+			currentTime = new Date().toLocaleTimeString();
+		}, 1000);
+		return () => clearInterval(interval);
+	});
+
+	function formatNumber(n: number): string {
+		if (n >= 1_000_000_000) return (n / 1_000_000_000).toFixed(2) + 'B';
+		if (n >= 1_000_000) return (n / 1_000_000).toFixed(2) + 'M';
+		if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
+		return n.toLocaleString();
+	}
+
+	function formatCost(n: number): string {
+		if (n >= 100) return '$' + n.toFixed(0);
+		if (n >= 1) return '$' + n.toFixed(2);
+		return '$' + n.toFixed(4);
+	}
+
+	function getModelShortName(model: string): string {
+		const parts = model.split('/');
+		const name = parts[parts.length - 1];
+		if (name.length > 20) return name.slice(0, 20) + '...';
+		return name;
+	}
+
+	function formatDuration(ms: number): string {
+		if (ms >= 1000) return (ms / 1000).toFixed(1) + 's';
+		return ms.toFixed(0) + 'ms';
+	}
+
+	function formatPercent(part: number, total: number): string {
+		if (total <= 0) return '0%';
+		return ((part / total) * 100).toFixed(1) + '%';
+	}
+
+	// Derived data for charts
+	let costTimeData = $derived(
+		costOverTime?.map((d) => ({ date: d.date, value: d.cost_usd })) ?? []
+	);
+	const modelCostLimit = 8;
+	let modelCostData = $derived.by(() => {
+		const items = costByModel ?? [];
+		const topItems = items.slice(0, modelCostLimit);
+		const topData = topItems.map((d) => ({
+			label: getModelShortName(d.model_id),
+			value: d.cost_usd
+		}));
+		const totalCost = items.reduce((sum, d) => sum + d.cost_usd, 0);
+		const topCost = topItems.reduce((sum, d) => sum + d.cost_usd, 0);
+		const otherCost = totalCost - topCost;
+		return otherCost > 0 ? [...topData, { label: 'other', value: otherCost }] : topData;
+	});
+	let tokensTimeData = $derived(
+		costOverTime?.map((d) => ({
+			date: d.date,
+			tokens_input: d.tokens_input,
+			tokens_output: d.tokens_output
+		})) ?? []
+	);
+	let agentCostData = $derived(
+		agentBreakdown?.map((d) => ({
+			label: d.agent || 'unknown',
+			value: d.cost_usd
+		})) ?? []
+	);
+	let totalPrompt = $derived((totals?.total_input ?? 0) + (totals?.total_cache_read ?? 0));
+</script>
+
+{#snippet loadingState()}
+	<div class="loading-skeleton">
+		<div class="skeleton-line"></div>
+		<div class="skeleton-line short"></div>
+	</div>
+{/snippet}
+
+{#snippet errorState(error: Error | null, retry: () => void)}
+	<div class="error-state">
+		<span class="text-sm">Failed to load</span>
+		<button onclick={retry} class="retry-btn">Retry</button>
+	</div>
+{/snippet}
+
+<div class="page-container">
+	<!-- Header -->
+	<header class="header reveal" style="animation-delay: 40ms;">
+		<div class="header-left">
+			<div class="header-breadcrumb">telemetry / tokens / cost</div>
+			<h1 class="header-title">
+				OpenCode <span class="accent">Observatory</span>
+			</h1>
+			<div class="header-subtitle">A tiny instrument panel for OpenCode's LLM usage.</div>
+		</div>
+
+		<div class="header-right">
+			<div class="time-display">
+				<div class="time-label">local time</div>
+				<div class="time-value">{currentTime}</div>
+			</div>
+			<button onclick={refreshAll} class="btn">
+				<span>↻</span> <span class="hidden xs:inline">refresh</span>
+			</button>
+		</div>
+	</header>
+
+	<!-- Main Stats Row -->
+	<section class="stats-grid" aria-label="Top-level totals">
+		{#if totalsLoading}
+			<div class="panel reveal" style="animation-delay: 80ms;">
+				<div class="stat-value accent pulse">--</div>
+				<div class="stat-label">total spent</div>
+			</div>
+			<div class="panel reveal" style="animation-delay: 110ms;">
+				<div class="stat-value accent pulse">--</div>
+				<div class="stat-label">total requests</div>
+			</div>
+			<div class="panel reveal" style="animation-delay: 140ms;">
+				<div class="stat-value primary pulse">--</div>
+				<div class="stat-label">input tokens</div>
+				<div class="stat-sublabel">cached --</div>
+			</div>
+			<div class="panel reveal" style="animation-delay: 170ms;">
+				<div class="stat-value secondary pulse">--</div>
+				<div class="stat-label">output tokens</div>
+			</div>
+		{:else if totalsError}
+			<div class="panel flex items-center justify-center">
+				{@render errorState(totalsError, fetchTotals)}
+			</div>
+		{:else if totals}
+			<div class="panel reveal" style="animation-delay: 80ms;">
+				<div class="stat-value accent">{formatCost(totals.total_cost)}</div>
+				<div class="stat-label">total spent</div>
+				<div class="panel-glow"></div>
+			</div>
+			<div class="panel reveal" style="animation-delay: 110ms;">
+				<div class="stat-value accent">{formatNumber(totals.total_requests)}</div>
+				<div class="stat-label">total requests</div>
+			</div>
+			<div class="panel reveal" style="animation-delay: 140ms;">
+				<div class="stat-value primary">{formatNumber(totalPrompt)}</div>
+				<div class="stat-label">input tokens</div>
+				<div class="stat-sublabel">
+					cached <span class="accent">{formatNumber(totals.total_cache_read)}</span>
+					<span class="text-tertiary">({formatPercent(totals.total_cache_read, totalPrompt)})</span>
+				</div>
+			</div>
+			<div class="panel reveal" style="animation-delay: 170ms;">
+				<div class="stat-value secondary">{formatNumber(totals.total_output)}</div>
+				<div class="stat-label">output tokens</div>
+			</div>
+		{/if}
+		
+		{#if velocityLoading}
+			<div class="panel reveal" style="animation-delay: 200ms;">
+				<div class="stat-value pulse">--</div>
+				<div class="stat-label">request velocity</div>
+			</div>
+		{:else if velocityError}
+			<div class="panel reveal" style="animation-delay: 200ms;">
+				<div class="stat-value" style="color: #ef4444;">!</div>
+				<div class="stat-label">request velocity</div>
+			</div>
+		{:else if velocity}
+			<div class="panel reveal" style="animation-delay: 200ms;">
+				<div class="stat-value">{velocity.requests_per_hour}<span class="stat-unit">/hr</span></div>
+				<div class="stat-label">request velocity</div>
+				<div class="stat-sublabel">
+					{velocity.requests_per_day}/day · {velocity.active_days} active days
+				</div>
+			</div>
+		{/if}
+	</section>
+
+	<!-- Charts Row 1 -->
+	<section class="charts-grid">
+		<div class="panel reveal" style="animation-delay: 210ms;">
+			<div class="section-header">
+				<h2 class="section-title">cost over time</h2>
+				<div class="section-subtitle">last 30 days</div>
+			</div>
+			{#if costOverTimeLoading}
+				{@render loadingState()}
+			{:else if costOverTimeError}
+				{@render errorState(costOverTimeError, fetchCostOverTime)}
+			{:else if costTimeData.length > 0}
+				<AreaChart
+					data={costTimeData}
+					height={220}
+					color="var(--color-accent)"
+					gradientId="costGrad"
+				/>
+			{:else}
+				<div class="text-tertiary text-sm py-8 text-center">No data available</div>
+			{/if}
+		</div>
+
+		<div class="panel reveal" style="animation-delay: 240ms;">
+			<div class="section-header">
+				<h2 class="section-title">cost by model</h2>
+				<div class="section-subtitle">top {modelCostLimit} + other • all time</div>
+			</div>
+			{#if costByModelLoading}
+				{@render loadingState()}
+			{:else if costByModelError}
+				{@render errorState(costByModelError, fetchCostByModel)}
+			{:else if modelCostData.length > 0}
+				<DonutChart data={modelCostData} height={280} />
+			{:else}
+				<div class="text-tertiary text-sm py-8 text-center">No data available</div>
+			{/if}
+		</div>
+	</section>
+
+	<!-- Charts Row 2 -->
+	<section class="charts-grid">
+		<div class="panel reveal" style="animation-delay: 270ms;">
+			<h2 class="section-title">token flow</h2>
+			{#if costOverTimeLoading}
+				{@render loadingState()}
+			{:else if costOverTimeError}
+				{@render errorState(costOverTimeError, fetchCostOverTime)}
+			{:else if tokensTimeData.length > 0}
+				<TokensChart data={tokensTimeData} height={220} />
+			{:else}
+				<div class="text-tertiary text-sm py-8 text-center">No data available</div>
+			{/if}
+		</div>
+		<div class="panel reveal" style="animation-delay: 300ms;">
+			<h2 class="section-title">cost by agent</h2>
+			{#if agentBreakdownLoading}
+				{@render loadingState()}
+			{:else if agentBreakdownError}
+				{@render errorState(agentBreakdownError, fetchAgentBreakdown)}
+			{:else if agentCostData.length > 0}
+				<BarChart data={agentCostData} height={220} color="var(--color-accent)" horizontal={true} />
+			{:else}
+				<div class="text-tertiary text-sm py-8 text-center">No data available</div>
+			{/if}
+		</div>
+	</section>
+
+	<!-- Code by Language -->
+	<section class="charts-grid">
+		<div class="panel reveal" style="animation-delay: 315ms;">
+			<h2 class="section-title">lines of code by language</h2>
+			{#if fileTypeSummaryLoading}
+				{@render loadingState()}
+			{:else if fileTypeSummaryError}
+				{@render errorState(fileTypeSummaryError, fetchFileTypeSummary)}
+			{:else if fileTypeSummary && fileTypeSummary.length > 0}
+				<FileTypeChart data={fileTypeSummary} height={320} />
+			{:else}
+				<div class="text-tertiary text-sm py-8 text-center">No file edit data yet</div>
+			{/if}
+		</div>
+		<div class="panel reveal" style="animation-delay: 330ms;">
+			<h2 class="section-title">language stats</h2>
+			{#if fileTypeSummaryLoading}
+				{@render loadingState()}
+			{:else if fileTypeSummaryError}
+				{@render errorState(fileTypeSummaryError, fetchFileTypeSummary)}
+			{:else if fileTypeSummary && fileTypeSummary.length > 0}
+				{@const totalLinesAdded = fileTypeSummary.reduce((sum, d) => sum + d.total_lines_added, 0)}
+				{@const totalLinesRemoved = fileTypeSummary.reduce(
+					(sum, d) => sum + d.total_lines_removed,
+					0
+				)}
+				{@const totalEdits = fileTypeSummary.reduce(
+					(sum, d) => sum + d.edit_count + d.write_count,
+					0
+				)}
+				<div class="language-stats">
+					<div class="lang-stat">
+						<div class="lang-stat-value text-accent">{formatNumber(totalLinesAdded)}</div>
+						<div class="lang-stat-label">total lines added</div>
+					</div>
+					<div class="lang-stat">
+						<div class="lang-stat-value" style="color: #ef4444;">
+							{formatNumber(totalLinesRemoved)}
+						</div>
+						<div class="lang-stat-label">total lines removed</div>
+					</div>
+					<div class="lang-stat">
+						<div class="lang-stat-value" style="color: #22c55e;">
+							{formatNumber(totalLinesAdded - totalLinesRemoved)}
+						</div>
+						<div class="lang-stat-label">net lines</div>
+					</div>
+					<div class="lang-stat">
+						<div class="lang-stat-value text-secondary">{formatNumber(totalEdits)}</div>
+						<div class="lang-stat-label">file edits</div>
+					</div>
+				</div>
+				<div class="lang-table-container">
+					<table class="lang-table">
+						<thead>
+							<tr>
+								<th>ext</th>
+								<th>added</th>
+								<th>removed</th>
+								<th>net</th>
+								<th>edits</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each fileTypeSummary.slice(0, 8) as item (item.file_extension)}
+								<tr>
+									<td class="font-mono">.{item.file_extension}</td>
+									<td style="color: #22c55e;">+{formatNumber(item.total_lines_added)}</td>
+									<td style="color: #ef4444;">-{formatNumber(item.total_lines_removed)}</td>
+									<td>{formatNumber(item.net_lines)}</td>
+									<td class="text-tertiary">{item.edit_count + item.write_count}</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+			{:else}
+				<div class="text-tertiary text-sm py-8 text-center">No file edit data yet</div>
+			{/if}
+		</div>
+	</section>
+
+	<!-- Tokens explorer -->
+	<section class="full-width-grid">
+		<div class="panel reveal" style="animation-delay: 345ms;">
+			<h2 class="section-title">tokens explorer</h2>
+			{#if tokensDataLoading}
+				{@render loadingState()}
+			{:else if tokensDataError}
+				{@render errorState(tokensDataError, fetchTokensData)}
+			{:else if tokensData}
+				<TokensZoomChart hourly={tokensData.hourly} daily={tokensData.daily} height={220} />
+			{:else}
+				<div class="text-tertiary text-sm py-8 text-center">No data available</div>
+			{/if}
+		</div>
+	</section>
+
+	<!-- Model Performance Table -->
+	<section class="panel reveal" style="animation-delay: 360ms; margin-bottom: 1.5rem;">
+		<h2 class="section-title">model performance</h2>
+		{#if costByModelLoading || modelPerformanceLoading}
+			{@render loadingState()}
+		{:else if costByModelError || modelPerformanceError}
+			{@render errorState(costByModelError || modelPerformanceError, () => {
+				fetchCostByModel();
+				fetchModelPerformance();
+			})}
+		{:else if costByModel && costByModel.length > 0}
+			<div class="table-container">
+				<table>
+					<thead>
+						<tr>
+							<th>model</th>
+							<th>requests</th>
+							<th>input</th>
+							<th>output</th>
+							<th>avg duration</th>
+							<th>cost</th>
+						</tr>
+					</thead>
+					<tbody>
+						{#each costByModel as model (`${model.provider_id}/${model.model_id}`)}
+							{@const avgDuration = modelPerformance?.find((d) => d.model_id === model.model_id)}
+							<tr>
+								<td class="font-mono text-sm">
+									<span class="provider-badge">{model.provider_id}</span>
+									{getModelShortName(model.model_id)}
+								</td>
+								<td>{model.request_count.toLocaleString()}</td>
+								<td class="text-accent">{formatNumber(model.tokens_input)}</td>
+								<td class="text-primary">{formatNumber(model.tokens_output)}</td>
+								<td>{avgDuration ? formatDuration(avgDuration.avg_duration_ms) : '-'}</td>
+								<td class="text-accent font-medium">{formatCost(model.cost_usd)}</td>
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+			</div>
+		{:else}
+			<div class="text-tertiary text-sm py-8 text-center">No data available</div>
+		{/if}
+	</section>
+
+	<!-- Recent Activity -->
+	<section class="panel reveal" style="animation-delay: 390ms; margin-bottom: 1.5rem;">
+		<h2 class="section-title">recent activity</h2>
+		{#if recentRequestsLoading}
+			{@render loadingState()}
+		{:else if recentRequestsError}
+			{@render errorState(recentRequestsError, fetchRecentRequests)}
+		{:else if recentRequests && recentRequests.length > 0}
+			<div class="table-container scrollable">
+				<table>
+					<thead>
+						<tr>
+							<th>time</th>
+							<th>model</th>
+							<th>input</th>
+							<th>output</th>
+							<th>cache read</th>
+							<th>cache write</th>
+							<th>cost</th>
+						</tr>
+					</thead>
+					<tbody>
+						{#each recentRequests.slice(0, 15) as req (req.id)}
+							<tr>
+								<td class="text-tertiary text-sm">
+									{new Date(req.created_at).toLocaleString(undefined, {
+										month: 'short',
+										day: 'numeric',
+										hour: '2-digit',
+										minute: '2-digit'
+									})}
+								</td>
+								<td class="font-mono text-sm">{getModelShortName(req.model_id)}</td>
+								<td class="text-accent">{formatNumber(req.tokens_input)}</td>
+								<td class="text-primary">{formatNumber(req.tokens_output)}</td>
+								<td class="text-secondary">{formatNumber(req.tokens_cache_read)}</td>
+								<td class="text-secondary">{formatNumber(req.tokens_cache_write)}</td>
+								<td class="text-accent font-medium">{formatCost(req.cost_usd)}</td>
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+			</div>
+		{:else}
+			<div class="text-tertiary text-sm py-8 text-center">No data available</div>
+		{/if}
+	</section>
+
+	<!-- Footer -->
+	<footer class="footer reveal" style="animation-delay: 420ms;">
+		{#if totalsLoading}
+			<div class="footer-stats">
+				<span>Cache Read: --</span>
+				<span class="text-accent-dim">|</span>
+				<span>Cache Write: --</span>
+				<span class="text-accent-dim">|</span>
+				<span>Reasoning: --</span>
+			</div>
+		{:else if totals}
+			<div class="footer-stats">
+				<span>Cache Read: {formatNumber(totals.total_cache_read)}</span>
+				<span class="text-accent-dim">|</span>
+				<span>Cache Write: {formatNumber(totals.total_cache_write)}</span>
+				<span class="text-accent-dim">|</span>
+				<span>Reasoning: {formatNumber(totals.total_reasoning)}</span>
+			</div>
+		{:else}
+			<div class="footer-stats">
+				<span>Cache Read: --</span>
+				<span class="text-accent-dim">|</span>
+				<span>Cache Write: --</span>
+				<span class="text-accent-dim">|</span>
+				<span>Reasoning: --</span>
+			</div>
+		{/if}
+		<div class="footer-version">OpenCode Stats v1.0</div>
+	</footer>
+</div>
