@@ -1316,7 +1316,7 @@
 								{@const intensity = cell ? cell.request_count / maxCount : 0}
 								<div
 									class="heatmap-cell"
-									style="background-color: rgba(255, 107, 53, {intensity * 0.9 + 0.1});"
+									style="background-color: rgba(59, 130, 246, {intensity * 0.9 + 0.1});"
 									title="{day} {hour}:00 - {cell?.request_count ?? 0} requests"
 								></div>
 							{/each}
