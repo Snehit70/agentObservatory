@@ -40,6 +40,8 @@
 	let status = $state<'connecting' | 'open' | 'closed'>('connecting');
 	let filter = $state<string>('all');
 	let autoScroll = $state(true);
+	let topModel = $state<{ model_id: string; request_count: number; cost_usd: number } | null>(null);
+	let errorCount = $state(0);
 	let feedContainer: HTMLDivElement;
 
 	const EVENT_TYPES = {
@@ -119,6 +121,19 @@
 		es.onmessage = (m) => {
 			try {
 				const parsed = JSON.parse(m.data) as LiveEvent;
+				if (parsed.type === 'live.metrics') {
+					const metrics = parsed as unknown as {
+						top_model?: { model_id: string; request_count: number; cost_usd: number } | null;
+						error_count?: number;
+					};
+					if (metrics.top_model !== undefined) {
+						topModel = metrics.top_model ?? null;
+					}
+					if (metrics.error_count !== undefined) {
+						errorCount = metrics.error_count ?? 0;
+					}
+					return;
+				}
 				feed = [parsed, ...feed].slice(0, 500);
 
 				if (parsed.type === 'request' && parsed.sessionId) {
@@ -154,6 +169,22 @@
 			<div class="status-indicator" class:connected={status === 'open'}>
 				<span class="status-dot"></span>
 				<span class="status-text">{status}</span>
+			</div>
+			<div class="live-metric">
+				<div class="metric-label">top model (10m)</div>
+				<div class="metric-value">
+					{#if topModel}
+						{topModel.model_id} · {topModel.request_count}
+					{:else}
+						—
+					{/if}
+				</div>
+			</div>
+			<div class="live-metric">
+				<div class="metric-label">tool errors (15m)</div>
+				<div class="metric-value">
+					{errorCount}
+				</div>
 			</div>
 			<div class="event-count">
 				<span class="count-value">{feed.length}</span>
@@ -262,8 +293,8 @@
 								<div class="request-info">
 									<span class="model-name">{event.modelId}</span>
 									{#if event.agent}
-										<span class="agent-badge">{event.agent}</span>
-									{/if}
+									<span class="agent-badge">{event.agent}</span>
+								{/if}
 									{#if event.tokens}
 										<span class="token-info">
 											{event.tokens.input.toLocaleString()} in / {event.tokens.output.toLocaleString()}

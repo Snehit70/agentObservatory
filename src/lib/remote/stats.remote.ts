@@ -64,6 +64,24 @@ export const getTotals = query(async () => {
 	return totals;
 });
 
+export const getLatencyStats = query(async () => {
+	const [row] = await db
+		.select({
+			avg_ms: avg(requests.durationMs),
+			p95_ms: sql<number>`percentile_cont(0.95) WITHIN GROUP (ORDER BY ${requests.durationMs})`,
+			total: count()
+		})
+		.from(requests)
+		.where(isNotNull(requests.durationMs));
+
+	return {
+		avg_ms: Number(row?.avg_ms ?? 0),
+		p95_ms: Number(row?.p95_ms ?? 0),
+		total: Number(row?.total ?? 0)
+	};
+});
+
+
 // Velocity stats - requests per active day/hour
 export const getVelocity = query(async () => {
 	const dailyCounts = await db
@@ -463,6 +481,105 @@ export const getToolStatsOverTime = query(async () => {
 	}));
 });
 
+export const getToolSuccessSummary = query(async () => {
+	const [row] = await db
+		.select({
+			total: count(),
+			success_count: sql<number>`COUNT(*) FILTER (WHERE ${toolCalls.success} = true)`,
+			failure_count: sql<number>`COUNT(*) FILTER (WHERE ${toolCalls.success} = false)`
+		})
+		.from(toolCalls)
+		.where(isNotNull(toolCalls.completedAt));
+
+	const total = Number(row?.total ?? 0);
+	const successCount = Number(row?.success_count ?? 0);
+	const failureCount = Number(row?.failure_count ?? 0);
+	const successRate = total > 0 ? successCount / total : 0;
+
+	return {
+		total,
+		success_count: successCount,
+		failure_count: failureCount,
+		success_rate: successRate
+	};
+});
+
+export const getPeakDays = query(async () => {
+	const rows = await db
+		.select({
+			date: sql<string>`DATE(${requests.createdAt})::text`,
+			cost_usd: sum(requests.costUsd),
+			tokens_input: sum(requests.tokensInput),
+			tokens_output: sum(requests.tokensOutput),
+			tokens_reasoning: sum(requests.tokensReasoning),
+			tokens_cache_read: sum(requests.tokensCacheRead),
+			tokens_cache_write: sum(requests.tokensCacheWrite)
+		})
+		.from(requests)
+		.groupBy(sql`DATE(${requests.createdAt})`);
+
+	let peakCostDay: { date: string; cost_usd: number } | null = null;
+	let peakTokenDay: { date: string; tokens: number } | null = null;
+
+	for (const row of rows) {
+		const costUsd = Number(row.cost_usd ?? 0);
+		const tokens =
+			Number(row.tokens_input ?? 0) +
+			Number(row.tokens_output ?? 0) +
+			Number(row.tokens_reasoning ?? 0) +
+			Number(row.tokens_cache_read ?? 0) +
+			Number(row.tokens_cache_write ?? 0);
+
+		if (!peakCostDay || costUsd > peakCostDay.cost_usd) {
+			peakCostDay = { date: row.date, cost_usd: costUsd };
+		}
+		if (!peakTokenDay || tokens > peakTokenDay.tokens) {
+			peakTokenDay = { date: row.date, tokens };
+		}
+	}
+
+	return { peak_cost_day: peakCostDay, peak_token_day: peakTokenDay };
+});
+
+export const getLiveMetrics = query(async () => {
+	const topModelRows = await db
+		.select({
+			model_id: requests.modelId,
+			request_count: count(),
+			cost_usd: sum(requests.costUsd)
+		})
+		.from(requests)
+		.where(sql`${requests.createdAt} >= NOW() - INTERVAL '10 minutes'`)
+		.groupBy(requests.modelId)
+		.orderBy(desc(sql`COALESCE(SUM(${requests.costUsd}), 0)`))
+		.limit(1);
+
+	const [errorRow] = await db
+		.select({
+			error_count: count()
+		})
+		.from(toolCalls)
+		.where(
+			and(
+				sql`${toolCalls.completedAt} >= NOW() - INTERVAL '15 minutes'`,
+				sql`${toolCalls.success} = false`
+			)
+		);
+
+	const topModel = topModelRows[0]
+		? {
+				model_id: topModelRows[0].model_id,
+				request_count: Number(topModelRows[0].request_count ?? 0),
+				cost_usd: Number(topModelRows[0].cost_usd ?? 0)
+			}
+		: null;
+
+	return {
+		top_model: topModel,
+		error_count: Number(errorRow?.error_count ?? 0)
+	};
+});
+
 // File type stats (language breakdown)
 export const getFileTypeStats = query(async () => {
 	const result = await db
@@ -515,6 +632,292 @@ export const getFileTypeSummary = query(async () => {
 		total_lines_removed: Number(r.total_lines_removed ?? 0),
 		net_lines: Number(r.total_lines_added ?? 0) - Number(r.total_lines_removed ?? 0)
 	}));
+});
+
+// Cost trend - today vs 7-day average
+export const getCostTrend = query(async () => {
+	const dailyCosts = await db
+		.select({
+			date: sql<string>`DATE(${requests.createdAt})::text`,
+			cost_usd: sum(requests.costUsd)
+		})
+		.from(requests)
+		.where(sql`DATE(${requests.createdAt}) >= CURRENT_DATE - INTERVAL '7 days'`)
+		.groupBy(sql`DATE(${requests.createdAt})`);
+
+	const today = new Date().toISOString().split('T')[0];
+	const todayData = dailyCosts.find((d) => d.date === today);
+	const pastDays = dailyCosts.filter((d) => d.date !== today);
+
+	const todayCost = Number(todayData?.cost_usd ?? 0);
+	const avgCost = pastDays.length > 0
+		? pastDays.reduce((sum, d) => sum + Number(d.cost_usd ?? 0), 0) / pastDays.length
+		: 0;
+
+	let trend: 'up' | 'down' | 'neutral' = 'neutral';
+	let percentChange = 0;
+
+	if (avgCost > 0) {
+		percentChange = ((todayCost - avgCost) / avgCost) * 100;
+		if (percentChange > 5) trend = 'up';
+		else if (percentChange < -5) trend = 'down';
+	}
+
+	return {
+		today_cost: todayCost,
+		avg_7day_cost: avgCost,
+		days_in_avg: pastDays.length,
+		trend,
+		percent_change: percentChange
+	};
+});
+
+export const getSessionStats = query(async () => {
+	const sessionStats = await db
+		.select({
+			session_id: requests.sessionId,
+			total_duration_ms: sum(requests.durationMs),
+			request_count: count()
+		})
+		.from(requests)
+		.where(isNotNull(requests.durationMs))
+		.groupBy(requests.sessionId);
+
+	const durations = sessionStats.map((s) => Number(s.total_duration_ms ?? 0));
+	const totalSessions = sessionStats.length;
+	const avgDurationMs = totalSessions > 0 ? durations.reduce((a, b) => a + b, 0) / totalSessions : 0;
+	const longestDurationMs = totalSessions > 0 ? Math.max(...durations) : 0;
+
+	const [sessionsPerDayRow] = await db
+		.select({
+			days: sql<number>`COUNT(DISTINCT DATE(${requests.createdAt}))`,
+			sessions: sql<number>`COUNT(DISTINCT ${requests.sessionId})`
+		})
+		.from(requests);
+
+	const days = Number(sessionsPerDayRow?.days ?? 1);
+	const sessions = Number(sessionsPerDayRow?.sessions ?? 0);
+	const sessionsPerDay = days > 0 ? sessions / days : 0;
+
+	return {
+		total_sessions: totalSessions,
+		avg_duration_ms: avgDurationMs,
+		longest_duration_ms: longestDurationMs,
+		sessions_per_day: sessionsPerDay
+	};
+});
+
+// Model diversity score (Shannon entropy)
+export const getModelDiversity = query(async () => {
+	const modelCounts = await db
+		.select({
+			model_id: requests.modelId,
+			request_count: count()
+		})
+		.from(requests)
+		.groupBy(requests.modelId);
+
+	const total = modelCounts.reduce((sum, m) => sum + Number(m.request_count), 0);
+	if (total === 0) return { entropy: 0, normalized_entropy: 0, model_count: 0 };
+
+	// Shannon entropy: -sum(p * log2(p))
+	let entropy = 0;
+	for (const m of modelCounts) {
+		const p = Number(m.request_count) / total;
+		if (p > 0) {
+			entropy -= p * Math.log2(p);
+		}
+	}
+
+	// Normalized entropy (0-1 scale, where 1 = perfectly uniform)
+	const maxEntropy = Math.log2(modelCounts.length);
+	const normalizedEntropy = maxEntropy > 0 ? entropy / maxEntropy : 0;
+
+	return {
+		entropy,
+		normalized_entropy: normalizedEntropy,
+		model_count: modelCounts.length
+	};
+});
+
+// Cost forecast - projected monthly cost based on recent rate
+export const getCostForecast = query(async () => {
+	// Get cost from last 7 days
+	const [recentRow] = await db
+		.select({
+			total_cost: sum(requests.costUsd),
+			days: sql<number>`COUNT(DISTINCT DATE(${requests.createdAt}))`
+		})
+		.from(requests)
+		.where(sql`${requests.createdAt} >= CURRENT_DATE - INTERVAL '7 days'`);
+
+	const totalCost = Number(recentRow?.total_cost ?? 0);
+	const days = Number(recentRow?.days ?? 0);
+
+	const dailyRate = days > 0 ? totalCost / days : 0;
+	const monthlyProjection = dailyRate * 30;
+	const yearlyProjection = dailyRate * 365;
+
+	return {
+		daily_rate: dailyRate,
+		monthly_projection: monthlyProjection,
+		yearly_projection: yearlyProjection,
+		based_on_days: days
+	};
+});
+
+// Busiest hour heatmap - requests by hour and day of week
+export const getActivityHeatmap = query(async () => {
+	const result = await db
+		.select({
+			day_of_week: sql<number>`EXTRACT(DOW FROM ${requests.createdAt})::int`,
+			hour: sql<number>`EXTRACT(HOUR FROM ${requests.createdAt})::int`,
+			request_count: count(),
+			cost_usd: sum(requests.costUsd)
+		})
+		.from(requests)
+		.groupBy(
+			sql`EXTRACT(DOW FROM ${requests.createdAt})`,
+			sql`EXTRACT(HOUR FROM ${requests.createdAt})`
+		)
+		.orderBy(
+			sql`EXTRACT(DOW FROM ${requests.createdAt})`,
+			sql`EXTRACT(HOUR FROM ${requests.createdAt})`
+		);
+
+	return result.map((r) => ({
+		day_of_week: Number(r.day_of_week), // 0 = Sunday, 6 = Saturday
+		hour: Number(r.hour),
+		request_count: Number(r.request_count),
+		cost_usd: Number(r.cost_usd ?? 0)
+	}));
+});
+
+// Error rate by model
+export const getErrorRateByModel = query(async () => {
+	// Join requests with tool_calls to get error rates per model
+	const result = await db
+		.select({
+			model_id: requests.modelId,
+			total_requests: sql<number>`COUNT(DISTINCT ${requests.id})`,
+			total_tool_calls: count(toolCalls.id),
+			failed_tool_calls: sql<number>`COUNT(*) FILTER (WHERE ${toolCalls.success} = false)`
+		})
+		.from(requests)
+		.leftJoin(toolCalls, sql`${requests.sessionId} = ${toolCalls.sessionId}`)
+		.groupBy(requests.modelId)
+		.orderBy(desc(sql`COUNT(*) FILTER (WHERE ${toolCalls.success} = false)`));
+
+	return result.map((r) => {
+		const totalCalls = Number(r.total_tool_calls ?? 0);
+		const failedCalls = Number(r.failed_tool_calls ?? 0);
+		return {
+			model_id: r.model_id,
+			display_name: getModelDisplayName(r.model_id ?? ''),
+			total_requests: Number(r.total_requests ?? 0),
+			total_tool_calls: totalCalls,
+			failed_tool_calls: failedCalls,
+			error_rate: totalCalls > 0 ? failedCalls / totalCalls : 0
+		};
+	});
+});
+
+// Avg tokens per request
+export const getAvgTokensPerRequest = query(async () => {
+	const [row] = await db
+		.select({
+			request_count: count(),
+			total_input: sum(requests.tokensInput),
+			total_output: sum(requests.tokensOutput),
+			total_reasoning: sum(requests.tokensReasoning),
+			total_cache_read: sum(requests.tokensCacheRead),
+			total_cache_write: sum(requests.tokensCacheWrite)
+		})
+		.from(requests);
+
+	const requestCount = Number(row?.request_count ?? 0);
+	const totalInput = Number(row?.total_input ?? 0);
+	const totalOutput = Number(row?.total_output ?? 0);
+	const totalReasoning = Number(row?.total_reasoning ?? 0);
+	const totalCacheRead = Number(row?.total_cache_read ?? 0);
+	const totalCacheWrite = Number(row?.total_cache_write ?? 0);
+
+	return {
+		request_count: requestCount,
+		avg_input: requestCount > 0 ? totalInput / requestCount : 0,
+		avg_output: requestCount > 0 ? totalOutput / requestCount : 0,
+		avg_reasoning: requestCount > 0 ? totalReasoning / requestCount : 0,
+		avg_cache_read: requestCount > 0 ? totalCacheRead / requestCount : 0,
+		avg_cache_write: requestCount > 0 ? totalCacheWrite / requestCount : 0,
+		avg_total: requestCount > 0 ? (totalInput + totalOutput + totalReasoning + totalCacheRead + totalCacheWrite) / requestCount : 0
+	};
+});
+
+// Coding streak - consecutive days with activity
+export const getCodingStreak = query(async () => {
+	// Get all distinct dates with activity
+	const activeDates = await db
+		.select({
+			date: sql<string>`DATE(${requests.createdAt})::text`
+		})
+		.from(requests)
+		.groupBy(sql`DATE(${requests.createdAt})`)
+		.orderBy(desc(sql`DATE(${requests.createdAt})`));
+
+	if (activeDates.length === 0) {
+		return { current_streak: 0, longest_streak: 0, total_active_days: 0 };
+	}
+
+	const dates = activeDates.map((d) => new Date(d.date));
+	const today = new Date();
+	today.setHours(0, 0, 0, 0);
+
+	// Calculate current streak (must include today or yesterday)
+	let currentStreak = 0;
+	const mostRecentDate = dates[0];
+	mostRecentDate.setHours(0, 0, 0, 0);
+
+	const daysSinceLastActivity = Math.floor((today.getTime() - mostRecentDate.getTime()) / (1000 * 60 * 60 * 24));
+
+	if (daysSinceLastActivity <= 1) {
+		// Streak is active
+		currentStreak = 1;
+		for (let i = 1; i < dates.length; i++) {
+			const prevDate = dates[i - 1];
+			const currDate = dates[i];
+			prevDate.setHours(0, 0, 0, 0);
+			currDate.setHours(0, 0, 0, 0);
+			const diff = Math.floor((prevDate.getTime() - currDate.getTime()) / (1000 * 60 * 60 * 24));
+			if (diff === 1) {
+				currentStreak++;
+			} else {
+				break;
+			}
+		}
+	}
+
+	// Calculate longest streak
+	let longestStreak = 1;
+	let tempStreak = 1;
+	for (let i = 1; i < dates.length; i++) {
+		const prevDate = dates[i - 1];
+		const currDate = dates[i];
+		prevDate.setHours(0, 0, 0, 0);
+		currDate.setHours(0, 0, 0, 0);
+		const diff = Math.floor((prevDate.getTime() - currDate.getTime()) / (1000 * 60 * 60 * 24));
+		if (diff === 1) {
+			tempStreak++;
+			longestStreak = Math.max(longestStreak, tempStreak);
+		} else {
+			tempStreak = 1;
+		}
+	}
+
+	return {
+		current_streak: currentStreak,
+		longest_streak: longestStreak,
+		total_active_days: dates.length
+	};
 });
 
 // File type stats over time

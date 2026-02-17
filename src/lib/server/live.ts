@@ -1,6 +1,6 @@
 import { client, db } from '$lib/server/db';
 import { requests, toolCalls } from '$lib/db/schema';
-import { eq } from 'drizzle-orm';
+import { eq, sql, desc, and } from 'drizzle-orm';
 
 type LiveEvent = Record<string, unknown>;
 
@@ -11,6 +11,7 @@ type Subscriber = {
 
 const encoder = new TextEncoder();
 const subscribers = new Set<Subscriber>();
+let metricsInterval: ReturnType<typeof setInterval> | null = null;
 
 // Listen for PG notifications
 let listening = false;
@@ -81,11 +82,64 @@ async function ensureListening() {
             }
         });
         console.log('Listening for live_event notifications...');
+        ensureMetricsLoop();
     } catch (e) {
         console.error('Failed to listen for live events:', e);
         listening = false;
         setTimeout(ensureListening, 5000);
     }
+}
+
+async function publishMetrics() {
+	try {
+		const topModelRows = await db
+			.select({
+				model_id: requests.modelId,
+				request_count: sql<number>`COUNT(*)`,
+				cost_usd: sql<number>`COALESCE(SUM(${requests.costUsd}), 0)`
+			})
+			.from(requests)
+			.where(sql`${requests.createdAt} >= NOW() - INTERVAL '10 minutes'`)
+			.groupBy(requests.modelId)
+			.orderBy(desc(sql`COALESCE(SUM(${requests.costUsd}), 0)`))
+			.limit(1);
+
+		const [errorRow] = await db
+			.select({
+				error_count: sql<number>`COUNT(*)`
+			})
+			.from(toolCalls)
+			.where(
+				and(
+					sql`${toolCalls.completedAt} >= NOW() - INTERVAL '15 minutes'`,
+					sql`${toolCalls.success} = false`
+				)
+			);
+
+		const topModel = topModelRows[0]
+			? {
+					model_id: topModelRows[0].model_id,
+					request_count: Number(topModelRows[0].request_count ?? 0),
+					cost_usd: Number(topModelRows[0].cost_usd ?? 0)
+				}
+			: null;
+
+		publishLiveEvent({
+			type: 'live.metrics',
+			top_model: topModel,
+			error_count: Number(errorRow?.error_count ?? 0)
+		});
+	} catch (e) {
+		console.error('Failed to compute live metrics:', e);
+	}
+}
+
+function ensureMetricsLoop() {
+	if (metricsInterval) return;
+	metricsInterval = setInterval(() => {
+		publishMetrics();
+	}, 15_000);
+	publishMetrics();
 }
 
 function send(controller: ReadableStreamDefaultController<Uint8Array>, payload: string) {
