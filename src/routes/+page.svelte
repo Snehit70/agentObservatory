@@ -1335,7 +1335,7 @@
 			{:else if errorRateByModelError}
 				{@render errorState(errorRateByModelError, fetchErrorRateByModel)}
 			{:else if errorRateByModel && errorRateByModel.length > 0}
-				{@const modelsWithErrors = errorRateByModel.filter((m) => m.failed_tool_calls > 0).slice(0, 8)}
+				{@const modelsWithErrors = errorRateByModel.filter((m) => m.failed_tool_calls > 0).sort((a, b) => b.error_rate - a.error_rate).slice(0, 8)}
 				{#if modelsWithErrors.length > 0}
 					<div class="error-rate-list">
 						{#each modelsWithErrors as model (model.model_id)}
