@@ -605,7 +605,6 @@ export const getFileTypeStats = query(async () => {
 	}));
 });
 
-// File type summary (aggregated by extension)
 export const getFileTypeSummary = query(async () => {
 	const result = await db
 		.select({
@@ -619,19 +618,51 @@ export const getFileTypeSummary = query(async () => {
 		})
 		.from(fileEdits)
 		.where(isNotNull(fileEdits.fileExtension))
-		.groupBy(fileEdits.fileExtension)
-		.orderBy(desc(count()));
+		.groupBy(fileEdits.fileExtension);
 
-	return result.map((r) => ({
-		file_extension: r.file_extension,
-		total_operations: Number(r.total_operations),
-		edit_count: Number(r.edit_count ?? 0),
-		write_count: Number(r.write_count ?? 0),
-		read_count: Number(r.read_count ?? 0),
-		total_lines_added: Number(r.total_lines_added ?? 0),
-		total_lines_removed: Number(r.total_lines_removed ?? 0),
-		net_lines: Number(r.total_lines_added ?? 0) - Number(r.total_lines_removed ?? 0)
-	}));
+	const aggregated = result.reduce((map, r) => {
+		const ext = (r.file_extension ?? '')
+			.replace(/^\./, '')
+			.toLowerCase()
+			.trim();
+		if (!ext) return map;
+
+		const existing = map.get(ext);
+		if (existing) {
+			existing.total_operations += Number(r.total_operations);
+			existing.edit_count += Number(r.edit_count ?? 0);
+			existing.write_count += Number(r.write_count ?? 0);
+			existing.read_count += Number(r.read_count ?? 0);
+			existing.total_lines_added += Number(r.total_lines_added ?? 0);
+			existing.total_lines_removed += Number(r.total_lines_removed ?? 0);
+		} else {
+			map.set(ext, {
+				file_extension: ext,
+				total_operations: Number(r.total_operations),
+				edit_count: Number(r.edit_count ?? 0),
+				write_count: Number(r.write_count ?? 0),
+				read_count: Number(r.read_count ?? 0),
+				total_lines_added: Number(r.total_lines_added ?? 0),
+				total_lines_removed: Number(r.total_lines_removed ?? 0)
+			});
+		}
+		return map;
+	}, new Map<string, {
+		file_extension: string;
+		total_operations: number;
+		edit_count: number;
+		write_count: number;
+		read_count: number;
+		total_lines_added: number;
+		total_lines_removed: number;
+	}>());
+
+	return Array.from(aggregated.values())
+		.map((r) => ({
+			...r,
+			net_lines: r.total_lines_added - r.total_lines_removed
+		}))
+		.sort((a, b) => b.total_lines_added - a.total_lines_added);
 });
 
 // Cost trend - today vs 7-day average
