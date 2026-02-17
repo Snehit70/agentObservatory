@@ -683,117 +683,65 @@
 	</nav>
 
 	{#if activeTab === 'overview'}
-	<!-- Main Stats Row -->
-	<section class="stats-grid" aria-label="Top-level totals">
+	<!-- TIER 1: HERO METRICS -->
+	<section class="hero-grid" aria-label="Key metrics">
 		{#if totalsLoading}
-			<div class="panel reveal" style="animation-delay: 80ms;">
-				<div class="stat-value accent pulse">--</div>
-				<div class="stat-label">total spent</div>
+			<div class="hero-card primary reveal" style="animation-delay: 80ms;">
+				<div class="hero-label">Total Spent</div>
+				<div class="hero-value pulse">--</div>
 			</div>
-			<div class="panel reveal" style="animation-delay: 110ms;">
-				<div class="stat-value accent pulse">--</div>
-				<div class="stat-label">total requests</div>
+			<div class="hero-card reveal" style="animation-delay: 110ms;">
+				<div class="hero-label">Total Requests</div>
+				<div class="hero-value pulse">--</div>
 			</div>
-			<div class="panel reveal" style="animation-delay: 140ms;">
-				<div class="stat-value primary pulse">--</div>
-				<div class="stat-label">input tokens</div>
-				<div class="stat-sublabel">cached --</div>
+			<div class="hero-card reveal" style="animation-delay: 140ms;">
+				<div class="hero-label">Input Tokens</div>
+				<div class="hero-value white pulse">--</div>
 			</div>
-			<div class="panel reveal" style="animation-delay: 170ms;">
-				<div class="stat-value secondary pulse">--</div>
-				<div class="stat-label">output tokens</div>
+			<div class="hero-card reveal" style="animation-delay: 170ms;">
+				<div class="hero-label">Output Tokens</div>
+				<div class="hero-value muted pulse">--</div>
+			</div>
+			<div class="hero-card reveal" style="animation-delay: 200ms;">
+				<div class="hero-label">Request Velocity</div>
+				<div class="hero-value pulse">--</div>
 			</div>
 		{:else if totalsError}
-			<div class="panel flex items-center justify-center">
-				{@render errorState(totalsError, fetchTotals)}
-			</div>
+			<div class="hero-card primary reveal"><div class="hero-value" style="color: #ef4444;">!</div></div>
 		{:else if totals}
-			<div class="panel reveal" style="animation-delay: 80ms;">
-				<div class="stat-value accent">{formatCost(totals.total_cost)}</div>
-				<div class="stat-label">total spent</div>
-				<div class="panel-glow"></div>
+			<div class="hero-card primary reveal" style="animation-delay: 80ms;">
+				<div class="hero-label">Total Spent</div>
+				<div class="hero-value">{formatCost(totals.total_cost)}</div>
+				<div class="hero-sublabel">Peak day: <span class="accent">{formatCost(peakDays?.peak_cost_day?.cost_usd ?? 0)}</span></div>
 			</div>
-			<div class="panel reveal" style="animation-delay: 110ms;">
-				<div class="stat-value accent">{formatNumber(totals.total_requests)}</div>
-				<div class="stat-label">total requests</div>
+			<div class="hero-card reveal" style="animation-delay: 110ms;">
+				<div class="hero-label">Total Requests</div>
+				<div class="hero-value">{formatNumber(totals.total_requests)}</div>
+				<div class="hero-sublabel">{velocity?.requests_per_day ?? 0}/day · {velocity?.requests_per_hour ?? 0}/hr</div>
 			</div>
-			<div class="panel reveal" style="animation-delay: 140ms;">
-				<div class="stat-value primary">{formatNumber(totalPrompt)}</div>
-				<div class="stat-label">input tokens</div>
-				<div class="stat-sublabel">
-					cached <span class="accent">{formatNumber(totals.total_cache_read)}</span>
-					<span class="text-tertiary">({formatPercent(totals.total_cache_read, totalPrompt)})</span>
-				</div>
+			<div class="hero-card reveal" style="animation-delay: 140ms;">
+				<div class="hero-label">Input Tokens</div>
+				<div class="hero-value white">{formatNumber(totalPrompt)}</div>
+				<div class="hero-sublabel">Cached <span class="accent">{formatNumber(totals.total_cache_read)}</span> ({formatPercent(totals.total_cache_read, totalPrompt)})</div>
 			</div>
-			<div class="panel reveal" style="animation-delay: 170ms;">
-				<div class="stat-value secondary">{formatNumber(totals.total_output)}</div>
-				<div class="stat-label">output tokens</div>
+			<div class="hero-card reveal" style="animation-delay: 170ms;">
+				<div class="hero-label">Output Tokens</div>
+				<div class="hero-value muted">{formatNumber(totals.total_output)}</div>
+				<div class="hero-sublabel">{tokenEfficiency.toFixed(2)}x efficiency</div>
 			</div>
-		{/if}
-		
-		{#if velocityLoading}
-			<div class="panel reveal" style="animation-delay: 200ms;">
-				<div class="stat-value pulse">--</div>
-				<div class="stat-label">request velocity</div>
-			</div>
-		{:else if velocityError}
-			<div class="panel reveal" style="animation-delay: 200ms;">
-				<div class="stat-value" style="color: #ef4444;">!</div>
-				<div class="stat-label">request velocity</div>
-			</div>
-		{:else if velocity}
-			<div class="panel reveal" style="animation-delay: 200ms;">
-				<div class="stat-value">{velocity.requests_per_hour}<span class="stat-unit">/hr</span></div>
-				<div class="stat-label">request velocity</div>
-				<div class="stat-sublabel">
-					{velocity.requests_per_day}/day · {velocity.active_days} active days
-				</div>
+			<div class="hero-card reveal" style="animation-delay: 200ms;">
+				<div class="hero-label">Request Velocity</div>
+				<div class="hero-value">{velocity?.requests_per_hour ?? 0}<span class="hero-unit">/hr</span></div>
+				<div class="hero-sublabel">{velocity?.active_days ?? 0} active days · {codingStreak?.current_streak ?? 0}d streak</div>
 			</div>
 		{/if}
 	</section>
 
-	<section class="stats-grid" aria-label="Peak days">
-		{#if peakDaysLoading}
-			<div class="panel reveal" style="animation-delay: 325ms;">
-				<div class="stat-value pulse">--</div>
-				<div class="stat-label">peak cost day</div>
-			</div>
-			<div class="panel reveal" style="animation-delay: 350ms;">
-				<div class="stat-value pulse">--</div>
-				<div class="stat-label">peak token day</div>
-			</div>
-		{:else if peakDaysError}
-			<div class="panel reveal" style="animation-delay: 325ms;">
-				<div class="stat-value" style="color: #ef4444;">!</div>
-				<div class="stat-label">peak cost day</div>
-			</div>
-			<div class="panel reveal" style="animation-delay: 350ms;">
-				<div class="stat-value" style="color: #ef4444;">!</div>
-				<div class="stat-label">peak token day</div>
-			</div>
-		{:else}
-			<div class="panel reveal" style="animation-delay: 325ms;">
-				<div class="stat-value accent">
-					{formatCost(peakDays?.peak_cost_day?.cost_usd ?? 0)}
-				</div>
-				<div class="stat-label">peak cost day</div>
-				<div class="stat-sublabel">{peakDays?.peak_cost_day?.date ?? '—'}</div>
-			</div>
-			<div class="panel reveal" style="animation-delay: 350ms;">
-				<div class="stat-value">
-					{formatNumber(peakDays?.peak_token_day?.tokens ?? 0)}
-				</div>
-				<div class="stat-label">peak token day</div>
-				<div class="stat-sublabel">{peakDays?.peak_token_day?.date ?? '—'}</div>
-			</div>
-		{/if}
-	</section>
-
-	<!-- Charts Row 1 -->
+	<!-- TIER 2: CHARTS -->
 	<section class="charts-grid">
 		<div class="panel reveal" style="animation-delay: 210ms;">
 			<div class="section-header">
-				<h2 class="section-title">cost over time</h2>
+				<h2 class="section-title">Cost Over Time</h2>
 				<div class="section-subtitle">last 30 days</div>
 			</div>
 			{#if costOverTimeLoading}
@@ -801,12 +749,7 @@
 			{:else if costOverTimeError}
 				{@render errorState(costOverTimeError, fetchCostOverTime)}
 			{:else if costTimeData.length > 0}
-				<AreaChart
-					data={costTimeData}
-					height={220}
-					color="var(--color-accent)"
-					gradientId="costGrad"
-				/>
+				<AreaChart data={costTimeData} height={220} color="var(--color-accent)" gradientId="costGrad" />
 			{:else}
 				<div class="text-tertiary text-sm py-8 text-center">No data available</div>
 			{/if}
@@ -814,22 +757,16 @@
 
 		<div class="panel reveal" style="animation-delay: 240ms;">
 			<div class="section-header">
-				<h2 class="section-title">cost by model</h2>
+				<h2 class="section-title">Cost by Model</h2>
 				<div class="range-buttons">
 					{#each ['all', 'day', 'week', 'month'] as r}
-						<button
-							type="button"
-							class="range-btn {costByModelRange === (r as TimeRange) ? 'active' : ''}"
-							onclick={() => (costByModelRange = r as TimeRange)}
-						>
+						<button type="button" class="range-btn {costByModelRange === (r as TimeRange) ? 'active' : ''}" onclick={() => (costByModelRange = r as TimeRange)}>
 							{r.toUpperCase()}
 						</button>
 					{/each}
 				</div>
 			</div>
-			<div class="section-subtitle">
-				top {modelCostLimit} + other • {costByModelRange === 'all' ? 'all time' : `last ${costByModelRange}`}
-			</div>
+			<div class="section-subtitle">top {modelCostLimit} + other · {costByModelRange === 'all' ? 'all time' : 'last ' + costByModelRange}</div>
 			{#if costByModelLoading}
 				{@render loadingState()}
 			{:else if costByModelError}
@@ -842,255 +779,124 @@
 		</div>
 	</section>
 
-	<section class="stats-grid" aria-label="Derived stats">
-		{#if totalsLoading || costByModelLoading}
-			<div class="panel reveal" style="animation-delay: 225ms;">
-				<div class="stat-value pulse">--</div>
-				<div class="stat-label">cost / 1k tokens</div>
-			</div>
-			<div class="panel reveal" style="animation-delay: 250ms;">
-				<div class="stat-value pulse">--</div>
-				<div class="stat-label">top model share</div>
-			</div>
-		{:else if totalsError || costByModelError}
-			<div class="panel reveal" style="animation-delay: 225ms;">
-				<div class="stat-value" style="color: #ef4444;">!</div>
-				<div class="stat-label">cost / 1k tokens</div>
-			</div>
-			<div class="panel reveal" style="animation-delay: 250ms;">
-				<div class="stat-value" style="color: #ef4444;">!</div>
-				<div class="stat-label">top model share</div>
-			</div>
-		{:else}
-			<div class="panel reveal" style="animation-delay: 225ms;">
-				<div class="stat-value accent">{formatCost(costPer1kTokens)}</div>
-				<div class="stat-label">cost / 1k tokens</div>
-				<div class="stat-sublabel">all time</div>
-			</div>
-			<div class="panel reveal" style="animation-delay: 250ms;">
-				<div class="stat-value">{formatPercent(topModelShare, 1)}</div>
-				<div class="stat-label">top model share</div>
-				<div class="stat-sublabel">{costByModel?.[0]?.display_name ?? '—'}</div>
-			</div>
-		{/if}
-
-		{#if toolSuccessSummaryLoading}
-			<div class="panel reveal" style="animation-delay: 275ms;">
-				<div class="stat-value pulse">--</div>
-				<div class="stat-label">tool success</div>
-			</div>
-		{:else if toolSuccessSummaryError}
-			<div class="panel reveal" style="animation-delay: 275ms;">
-				<div class="stat-value" style="color: #ef4444;">!</div>
-				<div class="stat-label">tool success</div>
-			</div>
-		{:else}
-			<div class="panel reveal" style="animation-delay: 275ms;">
-				<div class="stat-value">{formatPercent(toolSuccessRate, 1)}</div>
-				<div class="stat-label">tool success</div>
-				<div class="stat-sublabel">
-					{toolSuccessSummary?.success_count ?? 0} ok · {toolSuccessSummary?.failure_count ?? 0} fail
-				</div>
-			</div>
-		{/if}
-
-		{#if latencyStatsLoading}
-			<div class="panel reveal" style="animation-delay: 300ms;">
-				<div class="stat-value pulse">--</div>
-				<div class="stat-label">latency p95</div>
-			</div>
-		{:else if latencyStatsError}
-			<div class="panel reveal" style="animation-delay: 300ms;">
-				<div class="stat-value" style="color: #ef4444;">!</div>
-				<div class="stat-label">latency p95</div>
-			</div>
-		{:else}
-			<div class="panel reveal" style="animation-delay: 300ms;">
-				<div class="stat-value">{formatDuration(latencyStats?.p95_ms ?? 0)}</div>
-				<div class="stat-label">latency p95</div>
-				<div class="stat-sublabel">avg {formatDuration(latencyStats?.avg_ms ?? 0)}</div>
-			</div>
-		{/if}
+	<!-- TIER 3: COST METRICS -->
+	<h3 class="grouped-section-title">Cost Metrics</h3>
+	<section class="stats-grid-4">
+		<div class="stat-card reveal" style="animation-delay: 225ms;">
+			<div class="stat-label">Cost / 1K Tokens</div>
+			{#if totalsLoading}<div class="stat-value pulse">--</div>
+			{:else}<div class="stat-value accent">{formatCost(costPer1kTokens)}</div>{/if}
+			<div class="stat-sublabel">all time average</div>
+		</div>
+		<div class="stat-card reveal" style="animation-delay: 250ms;">
+			<div class="stat-label">Top Model Share</div>
+			{#if costByModelLoading}<div class="stat-value pulse">--</div>
+			{:else}<div class="stat-value">{formatPercent(topModelShare, 1)}</div>{/if}
+			<div class="stat-sublabel">{costByModel?.[0]?.display_name ?? '—'}</div>
+		</div>
+		<div class="stat-card reveal" style="animation-delay: 275ms;">
+			<div class="stat-label">Today vs 7d Avg</div>
+			{#if costTrendLoading}<div class="stat-value pulse">--</div>
+			{:else}
+			<div class="stat-value" style="color: {trendColor};">{trendArrow} {Math.abs(costTrend?.percent_change ?? 0).toFixed(0)}%</div>
+			{/if}
+			<div class="stat-sublabel">{formatCost(costTrend?.today_cost ?? 0)} today · {formatCost(costTrend?.avg_7day_cost ?? 0)} avg</div>
+		</div>
+		<div class="stat-card reveal" style="animation-delay: 300ms;">
+			<div class="stat-label">Monthly Forecast</div>
+			{#if costForecastLoading}<div class="stat-value pulse">--</div>
+			{:else}<div class="stat-value accent">{formatCost(costForecast?.monthly_projection ?? 0)}</div>{/if}
+			<div class="stat-sublabel">{formatCost(costForecast?.daily_rate ?? 0)}/day · based on {costForecast?.based_on_days ?? 0}d</div>
+		</div>
 	</section>
 
-	<!-- New Stats Row -->
-	<section class="stats-grid" aria-label="Additional stats">
-		{#if costTrendLoading}
-			<div class="panel reveal" style="animation-delay: 310ms;">
-				<div class="stat-value pulse">--</div>
-				<div class="stat-label">today vs avg</div>
-			</div>
-		{:else if costTrendError}
-			<div class="panel reveal" style="animation-delay: 310ms;">
-				<div class="stat-value" style="color: #ef4444;">!</div>
-				<div class="stat-label">today vs avg</div>
-			</div>
-		{:else}
-			<div class="panel reveal" style="animation-delay: 310ms;">
-				<div class="stat-value">
-					<span style="color: {trendColor};">{trendArrow}</span>
-					{Math.abs(costTrend?.percent_change ?? 0).toFixed(0)}%
-				</div>
-				<div class="stat-label">today vs 7d avg</div>
-				<div class="stat-sublabel">
-					{formatCost(costTrend?.today_cost ?? 0)} today · {formatCost(costTrend?.avg_7day_cost ?? 0)} avg
-				</div>
-			</div>
-		{/if}
-
-		{#if costForecastLoading}
-			<div class="panel reveal" style="animation-delay: 320ms;">
-				<div class="stat-value pulse">--</div>
-				<div class="stat-label">monthly forecast</div>
-			</div>
-		{:else if costForecastError}
-			<div class="panel reveal" style="animation-delay: 320ms;">
-				<div class="stat-value" style="color: #ef4444;">!</div>
-				<div class="stat-label">monthly forecast</div>
-			</div>
-		{:else}
-			<div class="panel reveal" style="animation-delay: 320ms;">
-				<div class="stat-value accent">{formatCost(costForecast?.monthly_projection ?? 0)}</div>
-				<div class="stat-label">monthly forecast</div>
-				<div class="stat-sublabel">
-					{formatCost(costForecast?.daily_rate ?? 0)}/day · based on {costForecast?.based_on_days ?? 0}d
-				</div>
-			</div>
-		{/if}
-
-		{#if avgTokensPerRequestLoading}
-			<div class="panel reveal" style="animation-delay: 330ms;">
-				<div class="stat-value pulse">--</div>
-				<div class="stat-label">tokens/request</div>
-			</div>
-		{:else if avgTokensPerRequestError}
-			<div class="panel reveal" style="animation-delay: 330ms;">
-				<div class="stat-value" style="color: #ef4444;">!</div>
-				<div class="stat-label">tokens/request</div>
-			</div>
-		{:else}
-			<div class="panel reveal" style="animation-delay: 330ms;">
-				<div class="stat-value">{formatNumber(avgTokensPerRequest?.avg_total ?? 0)}</div>
-				<div class="stat-label">tokens/request</div>
-				<div class="stat-sublabel">
-					in {formatNumber(avgTokensPerRequest?.avg_input ?? 0)} · out {formatNumber(avgTokensPerRequest?.avg_output ?? 0)}
-				</div>
-			</div>
-		{/if}
-
-		{#if totalsLoading}
-			<div class="panel reveal" style="animation-delay: 340ms;">
-				<div class="stat-value pulse">--</div>
-				<div class="stat-label">token efficiency</div>
-			</div>
-		{:else if totalsError}
-			<div class="panel reveal" style="animation-delay: 340ms;">
-				<div class="stat-value" style="color: #ef4444;">!</div>
-				<div class="stat-label">token efficiency</div>
-			</div>
-		{:else}
-			<div class="panel reveal" style="animation-delay: 340ms;">
-				<div class="stat-value">{tokenEfficiency.toFixed(2)}x</div>
-				<div class="stat-label">token efficiency</div>
-				<div class="stat-sublabel">output / input ratio</div>
-			</div>
-		{/if}
-
-		{#if modelDiversityLoading}
-			<div class="panel reveal" style="animation-delay: 350ms;">
-				<div class="stat-value pulse">--</div>
-				<div class="stat-label">model diversity</div>
-			</div>
-		{:else if modelDiversityError}
-			<div class="panel reveal" style="animation-delay: 350ms;">
-				<div class="stat-value" style="color: #ef4444;">!</div>
-				<div class="stat-label">model diversity</div>
-			</div>
-		{:else}
-			<div class="panel reveal" style="animation-delay: 350ms;">
-				<div class="stat-value">{((modelDiversity?.normalized_entropy ?? 0) * 100).toFixed(0)}%</div>
-				<div class="stat-label">model diversity</div>
-				<div class="stat-sublabel">{modelDiversity?.model_count ?? 0} models used</div>
-			</div>
-		{/if}
+	<!-- TIER 3: PERFORMANCE METRICS -->
+	<h3 class="grouped-section-title">Performance Metrics</h3>
+	<section class="stats-grid-4">
+		<div class="stat-card reveal" style="animation-delay: 325ms;">
+			<div class="stat-label">Latency P95</div>
+			{#if latencyStatsLoading}<div class="stat-value pulse">--</div>
+			{:else}<div class="stat-value">{formatDuration(latencyStats?.p95_ms ?? 0)}</div>{/if}
+			<div class="stat-sublabel">avg {formatDuration(latencyStats?.avg_ms ?? 0)}</div>
+		</div>
+		<div class="stat-card reveal" style="animation-delay: 350ms;">
+			<div class="stat-label">Tool Success</div>
+			{#if toolSuccessSummaryLoading}<div class="stat-value pulse">--</div>
+			{:else}<div class="stat-value" style="color: #22c55e;">{formatPercent(toolSuccessRate, 1)}</div>{/if}
+			<div class="stat-sublabel">{toolSuccessSummary?.success_count ?? 0} ok · {toolSuccessSummary?.failure_count ?? 0} fail</div>
+		</div>
+		<div class="stat-card reveal" style="animation-delay: 375ms;">
+			<div class="stat-label">Tokens / Request</div>
+			{#if avgTokensPerRequestLoading}<div class="stat-value pulse">--</div>
+			{:else}<div class="stat-value">{formatNumber(avgTokensPerRequest?.avg_total ?? 0)}</div>{/if}
+			<div class="stat-sublabel">in {formatNumber(avgTokensPerRequest?.avg_input ?? 0)} · out {formatNumber(avgTokensPerRequest?.avg_output ?? 0)}</div>
+		</div>
+		<div class="stat-card reveal" style="animation-delay: 400ms;">
+			<div class="stat-label">Token Efficiency</div>
+			{#if totalsLoading}<div class="stat-value pulse">--</div>
+			{:else}<div class="stat-value">{tokenEfficiency.toFixed(2)}x</div>{/if}
+			<div class="stat-sublabel">output / input ratio</div>
+		</div>
 	</section>
 
-	<!-- Session & Streak Stats -->
-	<section class="stats-grid" aria-label="Session stats">
-		{#if sessionStatsLoading}
-			<div class="panel reveal" style="animation-delay: 360ms;">
-				<div class="stat-value pulse">--</div>
-				<div class="stat-label">avg session</div>
-			</div>
-			<div class="panel reveal" style="animation-delay: 370ms;">
-				<div class="stat-value pulse">--</div>
-				<div class="stat-label">longest session</div>
-			</div>
-			<div class="panel reveal" style="animation-delay: 380ms;">
-				<div class="stat-value pulse">--</div>
-				<div class="stat-label">sessions/day</div>
-			</div>
-		{:else if sessionStatsError}
-			<div class="panel reveal" style="animation-delay: 360ms;">
-				<div class="stat-value" style="color: #ef4444;">!</div>
-				<div class="stat-label">avg session</div>
-			</div>
-			<div class="panel reveal" style="animation-delay: 370ms;">
-				<div class="stat-value" style="color: #ef4444;">!</div>
-				<div class="stat-label">longest session</div>
-			</div>
-			<div class="panel reveal" style="animation-delay: 380ms;">
-				<div class="stat-value" style="color: #ef4444;">!</div>
-				<div class="stat-label">sessions/day</div>
-			</div>
-		{:else}
-			<div class="panel reveal" style="animation-delay: 360ms;">
-				<div class="stat-value">{formatSessionDuration(sessionStats?.avg_duration_ms ?? 0)}</div>
-				<div class="stat-label">avg session</div>
-				<div class="stat-sublabel">{sessionStats?.total_sessions ?? 0} total sessions</div>
-			</div>
-			<div class="panel reveal" style="animation-delay: 370ms;">
-				<div class="stat-value">{formatSessionDuration(sessionStats?.longest_duration_ms ?? 0)}</div>
-				<div class="stat-label">longest session</div>
-			</div>
-			<div class="panel reveal" style="animation-delay: 380ms;">
-				<div class="stat-value">{(sessionStats?.sessions_per_day ?? 0).toFixed(1)}</div>
-				<div class="stat-label">sessions/day</div>
-			</div>
-		{/if}
+	<!-- TIER 3: ACTIVITY METRICS -->
+	<h3 class="grouped-section-title">Activity Metrics</h3>
+	<section class="stats-grid-4">
+		<div class="stat-card reveal" style="animation-delay: 425ms;">
+			<div class="stat-label">Peak Cost Day</div>
+			{#if peakDaysLoading}<div class="stat-value pulse">--</div>
+			{:else}<div class="stat-value accent">{formatCost(peakDays?.peak_cost_day?.cost_usd ?? 0)}</div>{/if}
+			<div class="stat-sublabel">{peakDays?.peak_cost_day?.date ?? '—'}</div>
+		</div>
+		<div class="stat-card reveal" style="animation-delay: 450ms;">
+			<div class="stat-label">Peak Token Day</div>
+			{#if peakDaysLoading}<div class="stat-value pulse">--</div>
+			{:else}<div class="stat-value">{formatNumber(peakDays?.peak_token_day?.tokens ?? 0)}</div>{/if}
+			<div class="stat-sublabel">{peakDays?.peak_token_day?.date ?? '—'}</div>
+		</div>
+		<div class="stat-card reveal" style="animation-delay: 475ms;">
+			<div class="stat-label">Avg Session</div>
+			{#if sessionStatsLoading}<div class="stat-value pulse">--</div>
+			{:else}<div class="stat-value">{formatSessionDuration(sessionStats?.avg_duration_ms ?? 0)}</div>{/if}
+			<div class="stat-sublabel">{sessionStats?.total_sessions ?? 0} total sessions</div>
+		</div>
+		<div class="stat-card reveal" style="animation-delay: 500ms;">
+			<div class="stat-label">Longest Session</div>
+			{#if sessionStatsLoading}<div class="stat-value pulse">--</div>
+			{:else}<div class="stat-value">{formatSessionDuration(sessionStats?.longest_duration_ms ?? 0)}</div>{/if}
+			<div class="stat-sublabel">—</div>
+		</div>
+	</section>
 
-		{#if codingStreakLoading}
-			<div class="panel reveal" style="animation-delay: 390ms;">
-				<div class="stat-value pulse">--</div>
-				<div class="stat-label">current streak</div>
-			</div>
-			<div class="panel reveal" style="animation-delay: 400ms;">
-				<div class="stat-value pulse">--</div>
-				<div class="stat-label">longest streak</div>
-			</div>
-		{:else if codingStreakError}
-			<div class="panel reveal" style="animation-delay: 390ms;">
-				<div class="stat-value" style="color: #ef4444;">!</div>
-				<div class="stat-label">current streak</div>
-			</div>
-			<div class="panel reveal" style="animation-delay: 400ms;">
-				<div class="stat-value" style="color: #ef4444;">!</div>
-				<div class="stat-label">longest streak</div>
-			</div>
-		{:else}
-			<div class="panel reveal" style="animation-delay: 390ms;">
-				<div class="stat-value accent">{codingStreak?.current_streak ?? 0}<span class="stat-unit">d</span></div>
-				<div class="stat-label">current streak</div>
-				<div class="stat-sublabel">{codingStreak?.total_active_days ?? 0} active days</div>
-			</div>
-			<div class="panel reveal" style="animation-delay: 400ms;">
-				<div class="stat-value">{codingStreak?.longest_streak ?? 0}<span class="stat-unit">d</span></div>
-				<div class="stat-label">longest streak</div>
-			</div>
-		{/if}
+	<!-- TIER 3: SESSION & STREAK -->
+	<h3 class="grouped-section-title">Session & Streak</h3>
+	<section class="stats-grid-4">
+		<div class="stat-card reveal" style="animation-delay: 525ms;">
+			<div class="stat-label">Sessions / Day</div>
+			{#if sessionStatsLoading}<div class="stat-value pulse">--</div>
+			{:else}<div class="stat-value">{(sessionStats?.sessions_per_day ?? 0).toFixed(1)}</div>{/if}
+			<div class="stat-sublabel">—</div>
+		</div>
+		<div class="stat-card reveal" style="animation-delay: 550ms;">
+			<div class="stat-label">Current Streak</div>
+			{#if codingStreakLoading}<div class="stat-value pulse">--</div>
+			{:else}<div class="stat-value accent">{codingStreak?.current_streak ?? 0}<span class="hero-unit">d</span></div>{/if}
+			<div class="stat-sublabel">{codingStreak?.total_active_days ?? 0} active days</div>
+		</div>
+		<div class="stat-card reveal" style="animation-delay: 575ms;">
+			<div class="stat-label">Longest Streak</div>
+			{#if codingStreakLoading}<div class="stat-value pulse">--</div>
+			{:else}<div class="stat-value">{codingStreak?.longest_streak ?? 0}<span class="hero-unit">d</span></div>{/if}
+			<div class="stat-sublabel">—</div>
+		</div>
+		<div class="stat-card reveal" style="animation-delay: 600ms;">
+			<div class="stat-label">Model Diversity</div>
+			{#if modelDiversityLoading}<div class="stat-value pulse">--</div>
+			{:else}<div class="stat-value">{((modelDiversity?.normalized_entropy ?? 0) * 100).toFixed(0)}%</div>{/if}
+			<div class="stat-sublabel">{modelDiversity?.model_count ?? 0} models used</div>
+		</div>
 	</section>
 	{/if}
-
 	{#if activeTab === 'code'}
 	<!-- Code by Language -->
 	<section class="charts-grid">
