@@ -742,46 +742,46 @@ tbody tr:hover {
 .heatmap-container {
 	display: flex;
 	flex-direction: column;
-	gap: 2px;
-	padding: 0.5rem 0;
+	gap: 3px;
+	padding: 0.75rem 0;
 }
 
 .heatmap-labels {
 	display: flex;
-	gap: 2px;
-	margin-bottom: 4px;
+	gap: 3px;
+	margin-bottom: 6px;
 }
 
 .heatmap-hour-label {
-	width: 12px;
-	height: 12px;
-	font-size: 0.55rem;
+	width: 16px;
+	height: 16px;
+	font-size: 0.6rem;
 	color: var(--color-text-tertiary);
 	text-align: center;
 }
 
 .heatmap-label {
-	width: 28px;
+	width: 36px;
 }
 
 .heatmap-row {
 	display: flex;
-	gap: 2px;
+	gap: 3px;
 	align-items: center;
 }
 
 .heatmap-day-label {
-	width: 28px;
-	font-size: 0.6rem;
+	width: 36px;
+	font-size: 0.65rem;
 	color: var(--color-text-tertiary);
 	text-transform: uppercase;
 	letter-spacing: 0.05em;
 }
 
 .heatmap-cell {
-	width: 12px;
-	height: 12px;
-	border-radius: 2px;
+	width: 16px;
+	height: 16px;
+	border-radius: 3px;
 	transition: transform 0.1s ease;
 }
 
