@@ -168,6 +168,7 @@
 	// State for all data
 	let totals = $state<Totals | null>(null);
 	let costByModel = $state<CostByModelItem[] | null>(null);
+	let modelsData = $state<CostByModelItem[] | null>(null);
 	let costOverTime = $state<CostOverTimeItem[] | null>(null);
 	let tokensData = $state<TokensData | null>(null);
 	let modelPerformance = $state<ModelPerformanceItem[] | null>(null);
@@ -186,10 +187,12 @@
 	let avgTokensPerRequest = $state<AvgTokensPerRequest | null>(null);
 	let codingStreak = $state<CodingStreak | null>(null);
 	let costByModelRange = $state<TimeRange>('all');
+	let modelPerformanceRange = $state<TimeRange>('all');
 
 	// Loading states
 	let totalsLoading = $state(true);
 	let costByModelLoading = $state(true);
+	let modelsDataLoading = $state(true);
 	let costOverTimeLoading = $state(true);
 	let tokensDataLoading = $state(true);
 	let modelPerformanceLoading = $state(true);
@@ -211,6 +214,7 @@
 	// Error states
 	let totalsError = $state<Error | null>(null);
 	let costByModelError = $state<Error | null>(null);
+	let modelsDataError = $state<Error | null>(null);
 	let costOverTimeError = $state<Error | null>(null);
 	let tokensDataError = $state<Error | null>(null);
 	let modelPerformanceError = $state<Error | null>(null);
@@ -267,6 +271,26 @@
 		}
 	}
 
+	async function fetchModelsData() {
+		modelsDataLoading = true;
+		modelsDataError = null;
+		try {
+			const days =
+				modelPerformanceRange === 'day'
+					? 1
+					: modelPerformanceRange === 'week'
+						? 7
+						: modelPerformanceRange === 'month'
+							? 30
+							: undefined;
+			modelsData = await getCostByModel(days);
+		} catch (e) {
+			modelsDataError = e instanceof Error ? e : new Error('Failed to load');
+		} finally {
+			modelsDataLoading = false;
+		}
+	}
+
 	async function fetchCostOverTime() {
 		costOverTimeLoading = true;
 		costOverTimeError = null;
@@ -298,11 +322,11 @@
 		modelPerformanceError = null;
 		try {
 			const days =
-				costByModelRange === 'day'
+				modelPerformanceRange === 'day'
 					? 1
-					: costByModelRange === 'week'
+					: modelPerformanceRange === 'week'
 						? 7
-						: costByModelRange === 'month'
+						: modelPerformanceRange === 'month'
 							? 30
 							: undefined;
 			modelPerformance = await getModelPerformance(days);
@@ -486,6 +510,7 @@
 	function refreshAll() {
 		fetchTotals();
 		fetchCostByModel();
+		fetchModelsData();
 		fetchCostOverTime();
 		fetchTokensData();
 		fetchModelPerformance();
@@ -508,6 +533,11 @@
 	$effect(() => {
 		costByModelRange;
 		fetchCostByModel();
+	});
+
+	$effect(() => {
+		modelPerformanceRange;
+		fetchModelsData();
 		fetchModelPerformance();
 	});
 
@@ -1000,15 +1030,25 @@
 	{#if activeTab === 'models'}
 	<!-- Model Performance Table -->
 	<section class="panel reveal" style="animation-delay: 360ms; margin-bottom: 1.5rem;">
-		<h2 class="section-title">model performance</h2>
-		{#if costByModelLoading || modelPerformanceLoading}
+		<div class="section-header">
+			<h2 class="section-title">model performance</h2>
+			<div class="range-buttons">
+				{#each ['all', 'day', 'week', 'month'] as r}
+					<button type="button" class="range-btn {modelPerformanceRange === (r as TimeRange) ? 'active' : ''}" onclick={() => (modelPerformanceRange = r as TimeRange)}>
+						{r.toUpperCase()}
+					</button>
+				{/each}
+			</div>
+		</div>
+		<div class="section-subtitle" style="margin-bottom: 1rem;">{modelPerformanceRange === 'all' ? 'all time' : 'last ' + modelPerformanceRange}</div>
+		{#if modelsDataLoading || modelPerformanceLoading}
 			{@render loadingState()}
-		{:else if costByModelError || modelPerformanceError}
-			{@render errorState(costByModelError || modelPerformanceError, () => {
-				fetchCostByModel();
+		{:else if modelsDataError || modelPerformanceError}
+			{@render errorState(modelsDataError || modelPerformanceError, () => {
+				fetchModelsData();
 				fetchModelPerformance();
 			})}
-		{:else if costByModel && costByModel.length > 0}
+		{:else if modelsData && modelsData.length > 0}
 			<div class="table-container">
 				<table>
 					<thead>
@@ -1022,7 +1062,7 @@
 						</tr>
 					</thead>
 					<tbody>
-						{#each costByModel as model (model.model_id)}
+						{#each modelsData as model (model.model_id)}
 							{@const avgDuration = modelPerformance?.find((d) => d.model_id === model.model_id)}
 							<tr>
 								<td class="font-mono text-sm">
