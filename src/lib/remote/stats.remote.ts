@@ -504,6 +504,88 @@ export const getToolSuccessSummary = query(async () => {
 	};
 });
 
+export const getBashCommandBreakdown = query(async () => {
+	const rows = await db
+		.select({
+			args: toolCalls.args,
+			success: toolCalls.success
+		})
+		.from(toolCalls)
+		.where(sql`${toolCalls.tool} = 'bash' AND ${toolCalls.args} IS NOT NULL`);
+
+	const categories: Record<string, { count: number; success: number; samples: string[] }> = {};
+
+	for (const row of rows) {
+		const args = row.args as { command?: string } | null;
+		const command = args?.command ?? '';
+		const { category, matched } = categorizeBashCommand(command);
+		
+		if (!categories[category]) {
+			categories[category] = { count: 0, success: 0, samples: [] };
+		}
+		categories[category].count++;
+		if (row.success) {
+			categories[category].success++;
+		}
+		if (categories[category].samples.length < 3 && matched) {
+			categories[category].samples.push(matched);
+		}
+	}
+
+	const result = Object.entries(categories)
+		.filter(([_, stats]) => stats.count > 0)
+		.map(([category, stats]) => ({
+			category,
+			count: stats.count,
+			success: stats.success,
+			success_rate: stats.count > 0 ? stats.success / stats.count : 0,
+			samples: stats.samples
+		}))
+		.sort((a, b) => {
+			if (a.category === 'other') return 1;
+			if (b.category === 'other') return -1;
+			return b.count - a.count;
+		});
+
+	return result;
+});
+
+function categorizeBashCommand(command: string): { category: string; matched: string } {
+	const cmd = command.trim().toLowerCase();
+	const firstWord = cmd.split(' ')[0];
+	
+	if (cmd.startsWith('git ')) return { category: 'git', matched: cmd.split(' ').slice(0, 3).join(' ') };
+	if (/^(gh|hub|gitlab)/.test(cmd)) return { category: 'cli', matched: firstWord };
+	
+	if (/^(npm|bun|yarn|pnpm)\s/.test(cmd)) return { category: 'package', matched: cmd.split(' ').slice(0, 3).join(' ') };
+	if (/^(pip|uv|poetry|python\d?)\s/.test(cmd)) return { category: 'python', matched: cmd.split(' ').slice(0, 3).join(' ') };
+	if (cmd.startsWith('cargo ')) return { category: 'rust', matched: firstWord };
+	if (/^go\s/.test(cmd)) return { category: 'go', matched: firstWord };
+	
+	if (/^(mkdir|rm|cp|mv|touch|cat|ls|find|chmod|chown|head|tail|wc|sort|uniq|tree|xargs)/.test(cmd)) return { category: 'file', matched: firstWord };
+	if (/^(tar|zip|unzip|gzip|gunzip|zcat)/.test(cmd)) return { category: 'archive', matched: firstWord };
+	if (/^(grep|sed|awk|jq|rg|ag|yq|xmllint)/.test(cmd)) return { category: 'text', matched: firstWord };
+	if (/^(echo|printf|export|source|cd|pwd|env|which|type|alias|set|unset|read)/.test(cmd)) return { category: 'shell', matched: firstWord };
+	if (/^(ps|kill|killall|top|htop|bg|fg|jobs|nohup|nice|renice)/.test(cmd)) return { category: 'process', matched: firstWord };
+	if (/^(curl|wget|http|ssh|scp|rsync|nc|netstat|ss|lsof|ping|dig|nslookup)/.test(cmd)) return { category: 'network', matched: firstWord };
+	if (/^(docker|podman|kubectl|helm|docker-compose)/.test(cmd)) return { category: 'container', matched: firstWord };
+	if (/^(aws|gcloud|az|terraform|ansible)/.test(cmd)) return { category: 'cloud', matched: firstWord };
+	if (/^(make|cmake|gcc|g\+\+|clang|ninja|bazel)/.test(cmd)) return { category: 'build', matched: firstWord };
+	if (/^(test|jest|vitest|pytest|mocha|cypress|playwright|karma)/.test(cmd)) return { category: 'test', matched: firstWord };
+	if (/^(eslint|prettier|biome|tsc|typescript|ruff|black|isort|mypy)/.test(cmd)) return { category: 'lint', matched: firstWord };
+	if (/^(node|deno|tsx|ts-node)\s/.test(cmd)) return { category: 'node', matched: firstWord };
+	if (/^(psql|mysql|sqlite|redis-cli|mongo|mongosh|prisma|drizzle)/.test(cmd)) return { category: 'database', matched: firstWord };
+	if (/^(nvm|fnm|pyenv|rbenv|jenv|sdkman)/.test(cmd)) return { category: 'version', matched: firstWord };
+	if (/^(uname|hostname|whoami|id|date|cal|uptime|free|df|du|lsblk)/.test(cmd)) return { category: 'system', matched: firstWord };
+	if (/^(fzf|fd|bat|exa|lsd|ripgrep|rg|delta|lazygit)/.test(cmd)) return { category: 'tools', matched: firstWord };
+	if (/^(op|pass|sops|dotenv|direnv)/.test(cmd)) return { category: 'secrets', matched: firstWord };
+
+	if (firstWord && firstWord.length > 0) {
+		return { category: 'other', matched: firstWord };
+	}
+	return { category: 'other', matched: '' };
+}
+
 export const getPeakDays = query(async () => {
 	const rows = await db
 		.select({
@@ -975,4 +1057,38 @@ export const getFileTypeStatsOverTime = query(async () => {
 		lines_added: Number(r.lines_added ?? 0),
 		lines_removed: Number(r.lines_removed ?? 0)
 	}));
+});
+
+// Cache Hit Rate - percentage of tokens served from cache
+export const getCacheHitRate = query(async () => {
+	const [row] = await db
+		.select({
+			total_input: sum(requests.tokensInput),
+			total_cache_read: sum(requests.tokensCacheRead),
+			total_cache_write: sum(requests.tokensCacheWrite)
+		})
+		.from(requests);
+
+	const tokensInput = Number(row?.total_input ?? 0);
+	const tokensCacheRead = Number(row?.total_cache_read ?? 0);
+	const tokensCacheWrite = Number(row?.total_cache_write ?? 0);
+
+	// Total tokens including cache reads = fresh input + cache reads
+	// Cache hit rate = cache reads / (fresh input + cache reads)
+	const totalWithCache = tokensInput + tokensCacheRead;
+	const hitRate = totalWithCache > 0 ? tokensCacheRead / totalWithCache : 0;
+
+	// Cache efficiency = (cache reads + cache writes) / total tokens
+	// This shows how much of the total token usage was cache-related
+	const totalTokens = totalWithCache + tokensCacheWrite;
+	const cacheEfficiency = totalTokens > 0 ? (tokensCacheRead + tokensCacheWrite) / totalTokens : 0;
+
+	return {
+		cache_hit_rate: hitRate,
+		cache_efficiency: cacheEfficiency,
+		tokens_input: tokensInput,
+		tokens_cache_read: tokensCacheRead,
+		tokens_cache_write: tokensCacheWrite,
+		total_tokens: totalWithCache
+	};
 });

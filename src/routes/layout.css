@@ -1055,3 +1055,176 @@ tbody tr:hover {
 .text-error {
 	color: #ef4444;
 }
+
+.success-overview {
+	margin: 1rem 0;
+}
+
+.success-bar-container {
+	display: flex;
+	height: 48px;
+	border-radius: 6px;
+	overflow: hidden;
+	margin-bottom: 1.5rem;
+}
+
+.success-bar-segment {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 0.5rem;
+	padding: 0 1rem;
+	min-width: 80px;
+	transition: width 0.5s ease;
+}
+
+.success-bar-segment.success {
+	background: var(--color-accent);
+}
+
+.success-bar-segment.fail {
+	background: #ef4444;
+}
+
+.success-bar-segment .bar-label {
+	font-size: 0.7rem;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	opacity: 0.8;
+}
+
+.success-bar-segment .bar-value {
+	font-size: 0.9rem;
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+}
+
+.success-stats {
+	display: flex;
+	justify-content: space-between;
+	gap: 1rem;
+}
+
+.success-stat {
+	text-align: center;
+}
+
+.success-stat .stat-value {
+	display: block;
+	font-size: 1.25rem;
+	font-weight: 700;
+	font-variant-numeric: tabular-nums;
+	color: var(--color-text-primary);
+}
+
+.success-stat.primary .stat-value {
+	color: var(--color-accent);
+	font-size: 1.5rem;
+}
+
+.success-stat .stat-label {
+	display: block;
+	font-size: 0.7rem;
+	text-transform: uppercase;
+	letter-spacing: 0.1em;
+	color: var(--color-text-tertiary);
+	margin-top: 0.25rem;
+}
+
+/* Tool Breakdown */
+.tool-list {
+	display: flex;
+	flex-direction: column;
+	gap: 0.5rem;
+}
+
+.tool-item {
+	display: grid;
+	grid-template-columns: 180px 1fr 100px;
+	gap: 0.75rem;
+	align-items: center;
+	padding: 0.5rem 0;
+	border-bottom: 1px solid var(--color-grid-line);
+}
+
+.tool-item:last-child {
+	border-bottom: none;
+}
+
+.tool-item.bash-item {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+}
+
+.tool-item.bash-item .tool-name {
+	flex: 0 0 100px;
+}
+
+.tool-item.bash-item .tool-bar-container {
+	flex: 1;
+	min-width: 100px;
+}
+
+.tool-item.bash-item .tool-stats {
+	flex: 0 0 100px;
+}
+
+.tool-samples {
+	flex: 0 0 100%;
+	margin-top: 0.25rem;
+	margin-left: 100px;
+	font-size: 0.65rem;
+	color: var(--color-text-tertiary);
+	font-family: var(--font-mono);
+}
+
+.tool-name {
+	font-family: var(--font-mono);
+	font-size: 0.75rem;
+	color: var(--color-text-secondary);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.tool-bar-container {
+	height: 8px;
+	background: var(--color-grid-line);
+	border-radius: 4px;
+	overflow: hidden;
+}
+
+.tool-bar {
+	height: 100%;
+	border-radius: 4px;
+	transition: width 0.3s ease;
+	background: var(--color-accent);
+}
+
+.tool-stats {
+	display: flex;
+	justify-content: flex-end;
+	gap: 0.5rem;
+	font-size: 0.75rem;
+}
+
+.tool-count {
+	color: var(--color-text-secondary);
+	font-variant-numeric: tabular-nums;
+}
+
+.tool-status {
+	font-size: 0.85rem;
+	margin-left: 0.25rem;
+}
+
+.tool-legend {
+	display: flex;
+	gap: 1rem;
+	margin-top: 1rem;
+	padding-top: 0.75rem;
+	border-top: 1px solid var(--color-grid-line);
+	font-size: 0.7rem;
+	color: var(--color-text-tertiary);
+}

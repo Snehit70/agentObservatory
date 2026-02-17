@@ -24,7 +24,10 @@
 		getActivityHeatmap,
 		getErrorRateByModel,
 		getAvgTokensPerRequest,
-		getCodingStreak
+		getCodingStreak,
+		getCacheHitRate,
+		getToolStats,
+		getBashCommandBreakdown
 	} from '$lib/remote/stats.remote';
 	import FileTypeChart from '$lib/components/FileTypeChart.svelte';
 
@@ -98,6 +101,22 @@
 		failure_count: number;
 		success_rate: number;
 	};
+	type ToolStatsItem = {
+		tool: string;
+		call_count: number;
+		success_count: number;
+		failure_count: number;
+		success_rate: number;
+		avg_duration_ms: number;
+		total_duration_ms: number;
+	};
+	type BashCommandBreakdown = {
+		category: string;
+		count: number;
+		success: number;
+		success_rate: number;
+		samples: string[];
+	};
 	type PeakDay = {
 		date: string;
 		cost_usd?: number;
@@ -164,6 +183,14 @@
 		longest_streak: number;
 		total_active_days: number;
 	};
+	type CacheHitRate = {
+		cache_hit_rate: number;
+		cache_efficiency: number;
+		tokens_input: number;
+		tokens_cache_read: number;
+		tokens_cache_write: number;
+		total_tokens: number;
+	};
 
 	// State for all data
 	let totals = $state<Totals | null>(null);
@@ -186,6 +213,9 @@
 	let errorRateByModel = $state<ErrorRateByModelItem[] | null>(null);
 	let avgTokensPerRequest = $state<AvgTokensPerRequest | null>(null);
 	let codingStreak = $state<CodingStreak | null>(null);
+	let cacheHitRate = $state<CacheHitRate | null>(null);
+	let toolStats = $state<ToolStatsItem[] | null>(null);
+	let bashBreakdown = $state<BashCommandBreakdown[] | null>(null);
 	let costByModelRange = $state<TimeRange>('all');
 	let modelPerformanceRange = $state<TimeRange>('all');
 
@@ -210,6 +240,9 @@
 	let errorRateByModelLoading = $state(true);
 	let avgTokensPerRequestLoading = $state(true);
 	let codingStreakLoading = $state(true);
+	let cacheHitRateLoading = $state(true);
+	let toolStatsLoading = $state(true);
+	let bashBreakdownLoading = $state(true);
 
 	// Error states
 	let totalsError = $state<Error | null>(null);
@@ -232,10 +265,13 @@
 	let errorRateByModelError = $state<Error | null>(null);
 	let avgTokensPerRequestError = $state<Error | null>(null);
 	let codingStreakError = $state<Error | null>(null);
+	let cacheHitRateError = $state<Error | null>(null);
+	let toolStatsError = $state<Error | null>(null);
+	let bashBreakdownError = $state<Error | null>(null);
 
 	let currentTime = $state(new Date().toLocaleTimeString());
 
-	type TabId = 'overview' | 'models' | 'activity' | 'code';
+	type TabId = 'overview' | 'models' | 'activity' | 'code' | 'tools';
 	let activeTab = $state<TabId>('overview');
 
 	// Fetch functions
@@ -507,6 +543,42 @@
 		}
 	}
 
+	async function fetchCacheHitRate() {
+		cacheHitRateLoading = true;
+		cacheHitRateError = null;
+		try {
+			cacheHitRate = await getCacheHitRate();
+		} catch (e) {
+			cacheHitRateError = e instanceof Error ? e : new Error('Failed to load');
+		} finally {
+			cacheHitRateLoading = false;
+		}
+	}
+
+	async function fetchToolStats() {
+		toolStatsLoading = true;
+		toolStatsError = null;
+		try {
+			toolStats = await getToolStats();
+		} catch (e) {
+			toolStatsError = e instanceof Error ? e : new Error('Failed to load');
+		} finally {
+			toolStatsLoading = false;
+		}
+	}
+
+	async function fetchBashBreakdown() {
+		bashBreakdownLoading = true;
+		bashBreakdownError = null;
+		try {
+			bashBreakdown = await getBashCommandBreakdown();
+		} catch (e) {
+			bashBreakdownError = e instanceof Error ? e : new Error('Failed to load');
+		} finally {
+			bashBreakdownLoading = false;
+		}
+	}
+
 	function refreshAll() {
 		fetchTotals();
 		fetchCostByModel();
@@ -528,6 +600,9 @@
 		fetchErrorRateByModel();
 		fetchAvgTokensPerRequest();
 		fetchCodingStreak();
+		fetchCacheHitRate();
+		fetchToolStats();
+		fetchBashBreakdown();
 	}
 
 	$effect(() => {
@@ -710,6 +785,12 @@
 		>
 			Code
 		</button>
+		<button
+			class="tab-btn {activeTab === 'tools' ? 'active' : ''}"
+			onclick={() => activeTab = 'tools'}
+		>
+			Tools
+		</button>
 	</nav>
 
 	{#if activeTab === 'overview'}
@@ -866,6 +947,12 @@
 			{#if totalsLoading}<div class="stat-value pulse">--</div>
 			{:else}<div class="stat-value">{tokenEfficiency.toFixed(2)}x</div>{/if}
 			<div class="stat-sublabel">output / input ratio</div>
+		</div>
+		<div class="stat-card reveal" style="animation-delay: 425ms;">
+			<div class="stat-label">Cache Hit Rate</div>
+			{#if cacheHitRateLoading}<div class="stat-value pulse">--</div>
+			{:else}<div class="stat-value" style="color: #22c55e;">{((cacheHitRate?.cache_hit_rate ?? 0) * 100).toFixed(1)}%</div>{/if}
+			<div class="stat-sublabel">{formatNumber(cacheHitRate?.tokens_cache_read ?? 0)} / {formatNumber(cacheHitRate?.total_tokens ?? 0)} tokens</div>
 		</div>
 	</section>
 
@@ -1205,6 +1292,123 @@
 				<div class="text-tertiary text-sm py-8 text-center">No data available</div>
 			{/if}
 		</div>
+	</section>
+	{/if}
+
+	{#if activeTab === 'tools'}
+	{@const displayedTools = toolStats ? toolStats.slice(0, 12) : []}
+	{@const maxToolCalls = displayedTools.length > 0 ? Math.max(...displayedTools.map(t => t.call_count), 1) : 1}
+	<!-- Tool Success Overview -->
+	<section class="panel reveal" style="animation-delay: 450ms; margin-bottom: 1.5rem;">
+		<h2 class="section-title">tool success rate</h2>
+		{#if toolSuccessSummaryLoading}
+			{@render loadingState()}
+		{:else if toolSuccessSummaryError}
+			{@render errorState(toolSuccessSummaryError, fetchToolSuccessSummary)}
+		{:else if toolSuccessSummary}
+			<div class="success-overview">
+				<div class="success-bar-container">
+					<div 
+						class="success-bar-segment success" 
+						style="width: {toolSuccessSummary.success_rate * 100}%;"
+					>
+						<span class="bar-label">success</span>
+						<span class="bar-value">{toolSuccessSummary.success_count.toLocaleString()}</span>
+					</div>
+					<div 
+						class="success-bar-segment fail" 
+						style="width: {(1 - toolSuccessSummary.success_rate) * 100}%;"
+					>
+						<span class="bar-label">fail</span>
+						<span class="bar-value">{toolSuccessSummary.failure_count.toLocaleString()}</span>
+					</div>
+				</div>
+				<div class="success-stats">
+					<div class="success-stat">
+						<span class="stat-value">{toolSuccessSummary.total.toLocaleString()}</span>
+						<span class="stat-label">total calls</span>
+					</div>
+					<div class="success-stat primary">
+						<span class="stat-value">{(toolSuccessSummary.success_rate * 100).toFixed(1)}%</span>
+						<span class="stat-label">success rate</span>
+					</div>
+					<div class="success-stat">
+						<span class="stat-value">{toolSuccessSummary.failure_count.toLocaleString()}</span>
+						<span class="stat-label">failures</span>
+					</div>
+				</div>
+			</div>
+		{:else}
+			<div class="text-tertiary text-sm py-8 text-center">No tool data available</div>
+		{/if}
+	</section>
+
+	<!-- Tool Breakdown -->
+	<section class="panel reveal" style="animation-delay: 470ms; margin-bottom: 1.5rem;">
+		<h2 class="section-title">tool breakdown by usage</h2>
+		{#if toolSuccessSummaryLoading}
+			{@render loadingState()}
+		{:else if displayedTools.length > 0}
+			<div class="tool-list">
+				{#each displayedTools as tool (tool.tool)}
+					<div class="tool-item">
+						<div class="tool-name">{tool.tool}</div>
+						<div class="tool-bar-container">
+							<div 
+								class="tool-bar" 
+								style="width: {(tool.call_count / maxToolCalls) * 100}%;"
+							></div>
+						</div>
+						<div class="tool-stats">
+							<span class="tool-count">{tool.call_count.toLocaleString()}</span>
+							<span class="tool-status" style="color: {tool.success_rate > 0.9 ? 'var(--color-text-tertiary)' : tool.success_rate > 0.7 ? '#f59e0b' : '#ef4444'};">
+								{tool.success_rate > 0.9 ? '✓' : tool.success_rate > 0.7 ? '△' : '✗'}
+							</span>
+						</div>
+					</div>
+				{/each}
+			</div>
+			<div class="tool-legend">
+				<span>✓ high success</span>
+				<span>△ some issues</span>
+				<span style="color: #ef4444;">✗ needs attention</span>
+			</div>
+		{:else}
+			<div class="text-tertiary text-sm py-8 text-center">No tool data available</div>
+		{/if}
+	</section>
+
+	{@const maxBashCount = bashBreakdown && bashBreakdown.length > 0 ? Math.max(...bashBreakdown.map(b => b.count), 1) : 1}
+	<section class="panel reveal" style="animation-delay: 490ms; margin-bottom: 1.5rem;">
+		<h2 class="section-title">bash commands by category</h2>
+		{#if bashBreakdownLoading}
+			{@render loadingState()}
+		{:else if bashBreakdown && bashBreakdown.length > 0}
+			<div class="tool-list">
+				{#each bashBreakdown as item (item.category)}
+					<div class="tool-item bash-item">
+						<div class="tool-name">{item.category}</div>
+						<div class="tool-bar-container">
+							<div 
+								class="tool-bar" 
+								style="width: {(item.count / maxBashCount) * 100}%;"
+							></div>
+						</div>
+						<div class="tool-stats">
+							<span class="tool-count">{item.count.toLocaleString()}</span>
+							<span class="tool-status" style="color: {item.success_rate > 0.9 ? 'var(--color-text-tertiary)' : item.success_rate > 0.7 ? '#f59e0b' : '#ef4444'};">
+								{item.success_rate > 0.9 ? '✓' : item.success_rate > 0.7 ? '△' : '✗'}
+							</span>
+						</div>
+						{#if item.category === 'other' && item.samples.length > 0}
+							<div class="tool-samples">e.g., {item.samples.join(', ')}</div>
+						{/if}
+					</div>
+				{/each}
+			</div>
+		{:else}
+			<div class="text-tertiary text-sm py-8 text-center">No bash command data available</div>
+		{/if}
 	</section>
 	{/if}
 
