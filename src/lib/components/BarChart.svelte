@@ -53,8 +53,12 @@
 		const svg = d3.select(svgElement);
 		svg.selectAll('*').remove();
 
+		// Calculate max label width for horizontal layout
+		const maxLabelLength = horizontal ? Math.max(...data.map(d => d.label.length)) : 0;
+		const dynamicLeftMargin = horizontal ? Math.min(150, Math.max(100, maxLabelLength * 7)) : 50;
+
 		const margin = horizontal
-			? { top: 10, right: 20, bottom: 20, left: 100 }
+			? { top: 10, right: 40, bottom: 20, left: dynamicLeftMargin }
 			: { top: 20, right: 20, bottom: 60, left: 50 };
 		const innerWidth = actualWidth - margin.left - margin.right;
 		const innerHeight = height - margin.top - margin.bottom;
@@ -90,6 +94,7 @@
 				.call(
 					d3
 						.axisBottom(x)
+						.ticks(5) // Limit grid lines
 						.tickSize(innerHeight)
 						.tickFormat(() => '')
 				)

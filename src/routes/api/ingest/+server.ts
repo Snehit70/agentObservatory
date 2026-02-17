@@ -8,7 +8,7 @@ import {
     toolCalls, 
     fileEdits 
 } from '$lib/db/schema';
-import { sql } from 'drizzle-orm';
+import { sql, eq, isNull, and } from 'drizzle-orm';
 
 import type { RequestHandler } from './$types';
 
@@ -105,6 +105,19 @@ export const POST: RequestHandler = async ({ request }) => {
                 modelId: event.modelId,
                 createdAt: new Date(event.createdAt)
             });
+
+            // Auto-derive session title if missing
+            if (event.prompt) {
+                const derivedTitle = event.prompt.slice(0, 100).trim();
+                if (derivedTitle) {
+                    await db.update(sessions)
+                        .set({ title: derivedTitle })
+                        .where(and(
+                            eq(sessions.sessionId, event.sessionId),
+                            isNull(sessions.title)
+                        ));
+                }
+            }
         }
 
         else if (type === 'tool.before') {

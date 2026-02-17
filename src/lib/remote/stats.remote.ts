@@ -2,24 +2,25 @@ import { query } from '$app/server';
 import { db } from '$lib/server/db';
 import { resolveCostUsd, normalizeModelId, getModelDisplayName } from '$lib/server/model-pricing';
 import { requests, dailySummary, toolCalls, fileEdits } from '$lib/db/schema';
-import { desc, sql, sum, count, avg, eq, isNotNull } from 'drizzle-orm';
+import { desc, sql, sum, count, avg, isNotNull, and } from 'drizzle-orm';
 import * as v from 'valibot';
 
 // Totals query - aggregate stats
 export const getTotals = query(async () => {
 	const rows = await db
 		.select({
-			request_count: dailySummary.requestCount,
-			tokens_input: dailySummary.tokensInput,
-			tokens_output: dailySummary.tokensOutput,
-			tokens_reasoning: dailySummary.tokensReasoning,
-			tokens_cache_read: dailySummary.tokensCacheRead,
-			tokens_cache_write: dailySummary.tokensCacheWrite,
-			cost_usd: dailySummary.costUsd,
-			provider_id: dailySummary.providerId,
-			model_id: dailySummary.modelId
+			request_count: count(),
+			tokens_input: sum(requests.tokensInput),
+			tokens_output: sum(requests.tokensOutput),
+			tokens_reasoning: sum(requests.tokensReasoning),
+			tokens_cache_read: sum(requests.tokensCacheRead),
+			tokens_cache_write: sum(requests.tokensCacheWrite),
+			cost_usd: sum(requests.costUsd),
+			provider_id: requests.providerId,
+			model_id: requests.modelId
 		})
-		.from(dailySummary);
+		.from(requests)
+		.groupBy(requests.modelId, requests.providerId);
 
 	const totals = rows.reduce(
 		(acc, row) => {
@@ -88,8 +89,8 @@ export const getVelocity = query(async () => {
 });
 
 // Cost by model query - aggregated by normalized model name
-export const getCostByModel = query(async () => {
-	const result = await db
+export const getCostByModel = query(v.optional(v.number()), async (days?: number) => {
+	const baseQuery = db
 		.select({
 			model_id: requests.modelId,
 			provider_id: requests.providerId,
@@ -101,8 +102,16 @@ export const getCostByModel = query(async () => {
 			tokens_cache_write: sum(requests.tokensCacheWrite),
 			cost_usd: sum(requests.costUsd)
 		})
-		.from(requests)
-		.groupBy(requests.modelId, requests.providerId);
+		.from(requests);
+
+	const filteredQuery =
+		days != null
+			? baseQuery.where(
+					sql`${requests.createdAt} >= NOW() - make_interval(days => ${days})`
+				)
+			: baseQuery;
+
+	const result = await filteredQuery.groupBy(requests.modelId, requests.providerId);
 
 	// First compute costs per raw model
 	const rawMapped = result.map((r) => ({
@@ -307,14 +316,22 @@ export const getAgentBreakdown = query(async () => {
 });
 
 // Model performance (avg duration) - aggregated by normalized model
-export const getModelPerformance = query(async () => {
+export const getModelPerformance = query(v.optional(v.number()), async (days?: number) => {
+	const whereClause =
+		days != null
+			? and(
+					isNotNull(requests.durationMs),
+					sql`${requests.createdAt} >= NOW() - make_interval(days => ${days})`
+				)
+			: isNotNull(requests.durationMs);
+
 	const result = await db
 		.select({
 			model_id: requests.modelId,
 			duration_ms: requests.durationMs,
 		})
 		.from(requests)
-		.where(sql`${requests.durationMs} IS NOT NULL`);
+		.where(whereClause);
 
 	// Aggregate by normalized model
 	const aggregated = new Map<string, {

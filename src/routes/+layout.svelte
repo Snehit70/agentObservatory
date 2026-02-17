@@ -7,7 +7,7 @@
 
 <svelte:head>
 	<link rel="icon" href={favicon} />
-	<title>OpenCode Stats</title>
+	<title>Agent Observatory</title>
 	<meta name="description" content="Token usage statistics for OpenCode" />
 </svelte:head>
 

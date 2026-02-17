@@ -36,6 +36,7 @@
 		tokens_output: number;
 		cost_usd: number;
 	};
+	type TimeRange = 'day' | 'week' | 'month' | 'year';
 	type CostOverTimeItem = {
 		date: string;
 		request_count: number;
@@ -99,6 +100,7 @@
 	let recentRequests = $state<RecentRequestItem[] | null>(null);
 	let fileTypeSummary = $state<FileTypeSummaryItem[] | null>(null);
 	let velocity = $state<Velocity | null>(null);
+	let costByModelRange = $state<TimeRange>('month');
 
 	// Loading states
 	let totalsLoading = $state(true);
@@ -141,7 +143,15 @@
 		costByModelLoading = true;
 		costByModelError = null;
 		try {
-			costByModel = await getCostByModel();
+			const days =
+				costByModelRange === 'day'
+					? 1
+					: costByModelRange === 'week'
+						? 7
+						: costByModelRange === 'month'
+							? 30
+							: 365;
+			costByModel = await getCostByModel(days);
 		} catch (e) {
 			costByModelError = e instanceof Error ? e : new Error('Failed to load');
 		} finally {
@@ -191,7 +201,15 @@
 		modelPerformanceLoading = true;
 		modelPerformanceError = null;
 		try {
-			modelPerformance = await getModelPerformance();
+			const days =
+				costByModelRange === 'day'
+					? 1
+					: costByModelRange === 'week'
+						? 7
+						: costByModelRange === 'month'
+							? 30
+							: 365;
+			modelPerformance = await getModelPerformance(days);
 		} catch (e) {
 			modelPerformanceError = e instanceof Error ? e : new Error('Failed to load');
 		} finally {
@@ -248,6 +266,12 @@
 		fetchFileTypeSummary();
 		fetchVelocity();
 	}
+
+	$effect(() => {
+		costByModelRange;
+		fetchCostByModel();
+		fetchModelPerformance();
+	});
 
 	$effect(() => {
 		untrack(() => refreshAll());
@@ -341,7 +365,7 @@
 		<div class="header-left">
 			<div class="header-breadcrumb">telemetry / tokens / cost</div>
 			<h1 class="header-title">
-				OpenCode <span class="accent">Observatory</span>
+				Agent <span class="accent">Observatory</span>
 			</h1>
 			<div class="header-subtitle">A tiny instrument panel for OpenCode's LLM usage.</div>
 		</div>
@@ -452,8 +476,19 @@
 		<div class="panel reveal" style="animation-delay: 240ms;">
 			<div class="section-header">
 				<h2 class="section-title">cost by model</h2>
-				<div class="section-subtitle">top {modelCostLimit} + other • all time</div>
+				<div class="range-buttons">
+					{#each ['day', 'week', 'month', 'year'] as r}
+						<button
+							type="button"
+							class="range-btn {costByModelRange === (r as TimeRange) ? 'active' : ''}"
+							onclick={() => (costByModelRange = r as TimeRange)}
+						>
+							{r.toUpperCase()}
+						</button>
+					{/each}
+				</div>
 			</div>
+			<div class="section-subtitle">top {modelCostLimit} + other • last {costByModelRange}</div>
 			{#if costByModelLoading}
 				{@render loadingState()}
 			{:else if costByModelError}

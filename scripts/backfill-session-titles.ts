@@ -94,12 +94,10 @@ async function main() {
     }
 
     const currentTitle = existing[0].title;
-    const isPlaceholder =
-      !currentTitle ||
-      currentTitle === "Untitled Session" ||
-      currentTitle.startsWith("New session -");
-
-    if (!isPlaceholder) {
+    
+    // We trust the file system title as the source of truth
+    // unless the current title is exactly the same
+    if (currentTitle === sessionData.title) {
       skipped++;
       continue;
     }
