@@ -27,7 +27,8 @@
 		getCodingStreak,
 		getCacheHitRate,
 		getToolStats,
-		getBashCommandBreakdown
+		getBashCommandBreakdown,
+		getSessionDepthStats
 	} from '$lib/remote/stats.remote';
 	import FileTypeChart from '$lib/components/FileTypeChart.svelte';
 
@@ -116,6 +117,17 @@
 		success: number;
 		success_rate: number;
 		samples: string[];
+	};
+	type SessionDepthStats = {
+		total_sessions: number;
+		total_turns: number;
+		avg_turns: number;
+		median_turns: number;
+		max_turns: number;
+		min_turns: number;
+		single_turn_count: number;
+		single_turn_percent: number;
+		distribution: { label: string; count: number; percent: number }[];
 	};
 	type PeakDay = {
 		date: string;
@@ -216,6 +228,7 @@
 	let cacheHitRate = $state<CacheHitRate | null>(null);
 	let toolStats = $state<ToolStatsItem[] | null>(null);
 	let bashBreakdown = $state<BashCommandBreakdown[] | null>(null);
+	let sessionDepthStats = $state<SessionDepthStats | null>(null);
 	let costByModelRange = $state<TimeRange>('all');
 	let modelPerformanceRange = $state<TimeRange>('all');
 
@@ -243,6 +256,7 @@
 	let cacheHitRateLoading = $state(true);
 	let toolStatsLoading = $state(true);
 	let bashBreakdownLoading = $state(true);
+	let sessionDepthLoading = $state(true);
 
 	// Error states
 	let totalsError = $state<Error | null>(null);
@@ -268,6 +282,7 @@
 	let cacheHitRateError = $state<Error | null>(null);
 	let toolStatsError = $state<Error | null>(null);
 	let bashBreakdownError = $state<Error | null>(null);
+	let sessionDepthError = $state<Error | null>(null);
 
 	let currentTime = $state(new Date().toLocaleTimeString());
 
@@ -579,6 +594,18 @@
 		}
 	}
 
+	async function fetchSessionDepthStats() {
+		sessionDepthLoading = true;
+		sessionDepthError = null;
+		try {
+			sessionDepthStats = await getSessionDepthStats();
+		} catch (e) {
+			sessionDepthError = e instanceof Error ? e : new Error('Failed to load');
+		} finally {
+			sessionDepthLoading = false;
+		}
+	}
+
 	function refreshAll() {
 		fetchTotals();
 		fetchCostByModel();
@@ -603,6 +630,7 @@
 		fetchCacheHitRate();
 		fetchToolStats();
 		fetchBashBreakdown();
+		fetchSessionDepthStats();
 	}
 
 	$effect(() => {
@@ -687,9 +715,9 @@
 			(totals?.total_cache_read ?? 0) +
 			(totals?.total_cache_write ?? 0)
 	);
-	let costPer1kTokens = $derived.by(() => {
+	let costPer1MTokens = $derived.by(() => {
 		if (!totals || totalTokens <= 0) return 0;
-		return totals.total_cost / (totalTokens / 1000);
+		return totals.total_cost / (totalTokens / 1_000_000);
 	});
 	let topModelShare = $derived.by(() => {
 		const top = costByModel?.[0];
@@ -894,9 +922,9 @@
 	<h3 class="grouped-section-title">Cost Metrics</h3>
 	<section class="stats-grid-4">
 		<div class="stat-card reveal" style="animation-delay: 225ms;">
-			<div class="stat-label">Cost / 1K Tokens</div>
+			<div class="stat-label">Cost / 1M Tokens</div>
 			{#if totalsLoading}<div class="stat-value pulse">--</div>
-			{:else}<div class="stat-value accent">{formatCost(costPer1kTokens)}</div>{/if}
+			{:else}<div class="stat-value accent">{formatCost(costPer1MTokens)}</div>{/if}
 			<div class="stat-sublabel">all time average</div>
 		</div>
 		<div class="stat-card reveal" style="animation-delay: 250ms;">
@@ -1292,6 +1320,58 @@
 				<div class="text-tertiary text-sm py-8 text-center">No data available</div>
 			{/if}
 		</div>
+	</section>
+
+	<!-- Session Depth Distribution -->
+	<section class="panel reveal" style="animation-delay: 430ms; margin-bottom: 1.5rem;">
+		<h2 class="section-title">session depth distribution</h2>
+		{#if sessionDepthLoading}
+			{@render loadingState()}
+		{:else if sessionDepthError}
+			{@render errorState(sessionDepthError, fetchSessionDepthStats)}
+		{:else if sessionDepthStats}
+			<div class="depth-stats-summary">
+				<div class="depth-stat">
+					<span class="depth-stat-value">{sessionDepthStats.total_sessions.toLocaleString()}</span>
+					<span class="depth-stat-label">sessions</span>
+				</div>
+				<div class="depth-stat">
+					<span class="depth-stat-value">{sessionDepthStats.avg_turns}</span>
+					<span class="depth-stat-label">avg turns</span>
+				</div>
+				<div class="depth-stat">
+					<span class="depth-stat-value">{sessionDepthStats.median_turns}</span>
+					<span class="depth-stat-label">median</span>
+				</div>
+				<div class="depth-stat">
+					<span class="depth-stat-value">{sessionDepthStats.max_turns}</span>
+					<span class="depth-stat-label">max</span>
+				</div>
+			</div>
+			<div class="depth-insight">
+				{#if sessionDepthStats.single_turn_percent > 0.5}
+					{(sessionDepthStats.single_turn_percent * 100).toFixed(0)}% of sessions are single-turn — you prefer quick answers
+				{:else if sessionDepthStats.single_turn_percent > 0.3}
+					Sessions are fairly split between quick queries and deeper work
+				{:else}
+					Most sessions involve multiple turns — you engage in extended conversations
+				{/if}
+			</div>
+			<div class="depth-distribution">
+				{#each sessionDepthStats.distribution as bucket}
+					<div class="depth-row">
+						<span class="depth-label">{bucket.label}</span>
+						<div class="depth-bar-container">
+							<div class="depth-bar" style="width: {bucket.percent * 100}%;"></div>
+						</div>
+						<span class="depth-count">{bucket.count.toLocaleString()}</span>
+						<span class="depth-percent">{(bucket.percent * 100).toFixed(0)}%</span>
+					</div>
+				{/each}
+			</div>
+		{:else}
+			<div class="text-tertiary text-sm py-8 text-center">No session data available</div>
+		{/if}
 	</section>
 	{/if}
 
