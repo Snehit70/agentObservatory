@@ -1283,26 +1283,30 @@ export const getTimeExplorerData = query(timeRangeSchema, async (range: TimeRang
 			.groupBy(dailySummary.date, dailySummary.providerId, dailySummary.modelId)
 			.orderBy(dailySummary.date);
 
-		const dateMap = new Map<string, TimeDataPoint>();
+		const dateMap = new Map<string, { data: TimeDataPoint; date: Date }>();
 		for (const r of rows) {
 			const existing = dateMap.get(r.date) ?? {
-				label: '',
-				cost_usd: 0,
-				tokens_input: 0,
-				tokens_output: 0,
-				tokens_reasoning: 0,
-				tokens_cache_read: 0,
-				tokens_cache_write: 0
+				data: {
+					label: '',
+					cost_usd: 0,
+					tokens_input: 0,
+					tokens_output: 0,
+					tokens_reasoning: 0,
+					tokens_cache_read: 0,
+					tokens_cache_write: 0
+				},
+				date: new Date(0)
 			};
 			const [year, month, day] = r.date.split('-').map(Number);
 			const date = new Date(year, month - 1, day);
-			existing.label = date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-			existing.tokens_input += Number(r.tokens_input ?? 0);
-			existing.tokens_output += Number(r.tokens_output ?? 0);
-			existing.tokens_reasoning += Number(r.tokens_reasoning ?? 0);
-			existing.tokens_cache_read += Number(r.tokens_cache_read ?? 0);
-			existing.tokens_cache_write += Number(r.tokens_cache_write ?? 0);
-			existing.cost_usd += resolveCostUsd({
+			existing.date = date;
+			existing.data.label = date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+			existing.data.tokens_input += Number(r.tokens_input ?? 0);
+			existing.data.tokens_output += Number(r.tokens_output ?? 0);
+			existing.data.tokens_reasoning += Number(r.tokens_reasoning ?? 0);
+			existing.data.tokens_cache_read += Number(r.tokens_cache_read ?? 0);
+			existing.data.tokens_cache_write += Number(r.tokens_cache_write ?? 0);
+			existing.data.cost_usd += resolveCostUsd({
 				costUsd: Number(r.cost_usd ?? 0),
 				providerId: r.provider_id,
 				modelId: r.model_id,
@@ -1315,7 +1319,9 @@ export const getTimeExplorerData = query(timeRangeSchema, async (range: TimeRang
 			dateMap.set(r.date, existing);
 		}
 
-		return Array.from(dateMap.values()).sort((a, b) => a.label.localeCompare(b.label));
+		return Array.from(dateMap.values())
+			.sort((a, b) => a.date.getTime() - b.date.getTime())
+			.map((d) => d.data);
 	}
 
 	if (range === 'month') {
@@ -1336,27 +1342,31 @@ export const getTimeExplorerData = query(timeRangeSchema, async (range: TimeRang
 			.groupBy(sql`DATE_TRUNC('week', ${dailySummary.date}::date)`, dailySummary.providerId, dailySummary.modelId)
 			.orderBy(sql`DATE_TRUNC('week', ${dailySummary.date}::date)`);
 
-		const weekMap = new Map<string, TimeDataPoint>();
+		const weekMap = new Map<string, { data: TimeDataPoint; date: Date }>();
 		for (const r of rows) {
 			const existing = weekMap.get(r.week_start) ?? {
-				label: '',
-				cost_usd: 0,
-				tokens_input: 0,
-				tokens_output: 0,
-				tokens_reasoning: 0,
-				tokens_cache_read: 0,
-				tokens_cache_write: 0
+				data: {
+					label: '',
+					cost_usd: 0,
+					tokens_input: 0,
+					tokens_output: 0,
+					tokens_reasoning: 0,
+					tokens_cache_read: 0,
+					tokens_cache_write: 0
+				},
+				date: new Date(0)
 			};
 			const datePart = r.week_start.split(' ')[0];
 			const [year, month, day] = datePart.split('-').map(Number);
 			const date = new Date(year, month - 1, day);
-			existing.label = `Week of ${date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
-			existing.tokens_input += Number(r.tokens_input ?? 0);
-			existing.tokens_output += Number(r.tokens_output ?? 0);
-			existing.tokens_reasoning += Number(r.tokens_reasoning ?? 0);
-			existing.tokens_cache_read += Number(r.tokens_cache_read ?? 0);
-			existing.tokens_cache_write += Number(r.tokens_cache_write ?? 0);
-			existing.cost_usd += resolveCostUsd({
+			existing.date = date;
+			existing.data.label = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+			existing.data.tokens_input += Number(r.tokens_input ?? 0);
+			existing.data.tokens_output += Number(r.tokens_output ?? 0);
+			existing.data.tokens_reasoning += Number(r.tokens_reasoning ?? 0);
+			existing.data.tokens_cache_read += Number(r.tokens_cache_read ?? 0);
+			existing.data.tokens_cache_write += Number(r.tokens_cache_write ?? 0);
+			existing.data.cost_usd += resolveCostUsd({
 				costUsd: Number(r.cost_usd ?? 0),
 				providerId: r.provider_id,
 				modelId: r.model_id,
@@ -1369,7 +1379,9 @@ export const getTimeExplorerData = query(timeRangeSchema, async (range: TimeRang
 			weekMap.set(r.week_start, existing);
 		}
 
-		return Array.from(weekMap.values()).sort((a, b) => a.label.localeCompare(b.label));
+		return Array.from(weekMap.values())
+			.sort((a, b) => a.date.getTime() - b.date.getTime())
+			.map((d) => d.data);
 	}
 
 	// year - monthly aggregation, all time
@@ -1389,27 +1401,31 @@ export const getTimeExplorerData = query(timeRangeSchema, async (range: TimeRang
 		.groupBy(sql`DATE_TRUNC('month', ${dailySummary.date}::date)`, dailySummary.providerId, dailySummary.modelId)
 		.orderBy(sql`DATE_TRUNC('month', ${dailySummary.date}::date)`);
 
-	const monthMap = new Map<string, TimeDataPoint>();
+	const monthMap = new Map<string, { data: TimeDataPoint; date: Date }>();
 	for (const r of rows) {
 		const existing = monthMap.get(r.month_start) ?? {
-			label: '',
-			cost_usd: 0,
-			tokens_input: 0,
-			tokens_output: 0,
-			tokens_reasoning: 0,
-			tokens_cache_read: 0,
-			tokens_cache_write: 0
+			data: {
+				label: '',
+				cost_usd: 0,
+				tokens_input: 0,
+				tokens_output: 0,
+				tokens_reasoning: 0,
+				tokens_cache_read: 0,
+				tokens_cache_write: 0
+			},
+			date: new Date(0)
 		};
 		const datePart = r.month_start.split(' ')[0];
 		const [year, month] = datePart.split('-').map(Number);
 		const date = new Date(year, month - 1, 1);
-		existing.label = date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
-		existing.tokens_input += Number(r.tokens_input ?? 0);
-		existing.tokens_output += Number(r.tokens_output ?? 0);
-		existing.tokens_reasoning += Number(r.tokens_reasoning ?? 0);
-		existing.tokens_cache_read += Number(r.tokens_cache_read ?? 0);
-		existing.tokens_cache_write += Number(r.tokens_cache_write ?? 0);
-		existing.cost_usd += resolveCostUsd({
+		existing.date = date;
+		existing.data.label = date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+		existing.data.tokens_input += Number(r.tokens_input ?? 0);
+		existing.data.tokens_output += Number(r.tokens_output ?? 0);
+		existing.data.tokens_reasoning += Number(r.tokens_reasoning ?? 0);
+		existing.data.tokens_cache_read += Number(r.tokens_cache_read ?? 0);
+		existing.data.tokens_cache_write += Number(r.tokens_cache_write ?? 0);
+		existing.data.cost_usd += resolveCostUsd({
 			costUsd: Number(r.cost_usd ?? 0),
 			providerId: r.provider_id,
 			modelId: r.model_id,
@@ -1422,5 +1438,7 @@ export const getTimeExplorerData = query(timeRangeSchema, async (range: TimeRang
 		monthMap.set(r.month_start, existing);
 	}
 
-	return Array.from(monthMap.values()).sort((a, b) => a.label.localeCompare(b.label));
+	return Array.from(monthMap.values())
+		.sort((a, b) => a.date.getTime() - b.date.getTime())
+		.map((d) => d.data);
 });
