@@ -51,7 +51,19 @@
 	}
 
 	function formatTokens(n: number) {
-		return `${(n / 1_000_000_000).toFixed(2)}B`;
+		if (n >= 1_000_000_000) {
+			const b = n / 1_000_000_000;
+			return b >= 10 ? `${b.toFixed(0)}B` : `${b.toFixed(1)}B`;
+		}
+		if (n >= 1_000_000) {
+			const m = n / 1_000_000;
+			return m >= 10 ? `${m.toFixed(0)}M` : `${m.toFixed(1)}M`;
+		}
+		if (n >= 1_000) {
+			const k = n / 1_000;
+			return k >= 10 ? `${k.toFixed(0)}K` : `${k.toFixed(1)}K`;
+		}
+		return n.toFixed(0);
 	}
 
 	function getTotalTokens(d: TimeDataPoint) {
