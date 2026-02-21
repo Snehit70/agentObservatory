@@ -1498,11 +1498,11 @@ export const getTimeExplorerData = query(timeRangeSchema, async (range: TimeRang
 			cost_usd: sum(dailySummary.costUsd)
 		})
 		.from(dailySummary)
-		.where(sql`${dailySummary.date}::date < CURRENT_DATE`)
+		.where(sql`${dailySummary.date}::date < DATE_TRUNC('month', CURRENT_DATE)`)
 		.groupBy(sql`DATE_TRUNC('month', ${dailySummary.date}::date)`, dailySummary.providerId, dailySummary.modelId)
 		.orderBy(sql`DATE_TRUNC('month', ${dailySummary.date}::date)`);
 
-	const todayMonthRows = await db
+	const currentMonthRows = await db
 		.select({
 			provider_id: requests.providerId,
 			model_id: requests.modelId,
@@ -1514,7 +1514,7 @@ export const getTimeExplorerData = query(timeRangeSchema, async (range: TimeRang
 			cost_usd: sum(requests.costUsd)
 		})
 		.from(requests)
-		.where(sql`${requests.createdAt}::date = CURRENT_DATE`)
+		.where(sql`${requests.createdAt} >= DATE_TRUNC('month', CURRENT_DATE)`)
 		.groupBy(requests.providerId, requests.modelId);
 
 	const monthMap = new Map<string, { data: TimeDataPoint; date: Date }>();
@@ -1570,7 +1570,7 @@ export const getTimeExplorerData = query(timeRangeSchema, async (range: TimeRang
 		date: todayMonth
 	};
 
-	for (const r of todayMonthRows) {
+	for (const r of currentMonthRows) {
 		todayMonthEntry.data.tokens_input += Number(r.tokens_input ?? 0);
 		todayMonthEntry.data.tokens_output += Number(r.tokens_output ?? 0);
 		todayMonthEntry.data.tokens_reasoning += Number(r.tokens_reasoning ?? 0);
