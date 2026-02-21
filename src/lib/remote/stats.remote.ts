@@ -1388,7 +1388,7 @@ export const getTimeExplorerData = query(timeRangeSchema, async (range: TimeRang
 				cost_usd: sum(dailySummary.costUsd)
 			})
 			.from(dailySummary)
-			.where(sql`${dailySummary.date}::date >= CURRENT_DATE - INTERVAL '30 days' AND ${dailySummary.date}::date < CURRENT_DATE`)
+			.where(sql`${dailySummary.date}::date >= CURRENT_DATE - INTERVAL '28 days' AND ${dailySummary.date}::date < CURRENT_DATE`)
 			.groupBy(dailySummary.date, dailySummary.providerId, dailySummary.modelId);
 
 		const todayRows = await db
@@ -1407,17 +1407,16 @@ export const getTimeExplorerData = query(timeRangeSchema, async (range: TimeRang
 			.groupBy(requests.providerId, requests.modelId);
 
 		const weekMap = new Map<string, { data: TimeDataPoint; date: Date }>();
+		const today = new Date();
 
-		for (const r of dailyRows) {
-			const [year, month, day] = r.date.split('-').map(Number);
-			const date = new Date(year, month - 1, day);
-			const weekStart = new Date(date);
-			weekStart.setDate(date.getDate() - date.getDay());
-			const weekKey = weekStart.toISOString().split('T')[0];
+		for (let i = 0; i < 4; i++) {
+			const weekEnd = new Date(today);
+			weekEnd.setDate(today.getDate() - (i * 7));
+			const weekEndStr = weekEnd.toISOString().split('T')[0];
 
-			const existing = weekMap.get(weekKey) ?? {
+			weekMap.set(weekEndStr, {
 				data: {
-					label: '',
+					label: weekEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
 					cost_usd: 0,
 					tokens_input: 0,
 					tokens_output: 0,
@@ -1425,63 +1424,60 @@ export const getTimeExplorerData = query(timeRangeSchema, async (range: TimeRang
 					tokens_cache_read: 0,
 					tokens_cache_write: 0
 				},
-				date: weekStart
-			};
-			existing.data.label = weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-			existing.data.tokens_input += Number(r.tokens_input ?? 0);
-			existing.data.tokens_output += Number(r.tokens_output ?? 0);
-			existing.data.tokens_reasoning += Number(r.tokens_reasoning ?? 0);
-			existing.data.tokens_cache_read += Number(r.tokens_cache_read ?? 0);
-			existing.data.tokens_cache_write += Number(r.tokens_cache_write ?? 0);
-			existing.data.cost_usd += resolveCostUsd({
-				costUsd: Number(r.cost_usd ?? 0),
-				providerId: r.provider_id,
-				modelId: r.model_id,
-				tokensInput: Number(r.tokens_input ?? 0),
-				tokensOutput: Number(r.tokens_output ?? 0),
-				tokensReasoning: Number(r.tokens_reasoning ?? 0),
-				tokensCacheRead: Number(r.tokens_cache_read ?? 0),
-				tokensCacheWrite: Number(r.tokens_cache_write ?? 0)
-			});
-			weekMap.set(weekKey, existing);
-		}
-
-		const today = new Date();
-		const todayWeekStart = new Date(today);
-		todayWeekStart.setDate(today.getDate() - today.getDay());
-		const todayWeekKey = todayWeekStart.toISOString().split('T')[0];
-
-		const todayEntry = weekMap.get(todayWeekKey) ?? {
-			data: {
-				label: todayWeekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-				cost_usd: 0,
-				tokens_input: 0,
-				tokens_output: 0,
-				tokens_reasoning: 0,
-				tokens_cache_read: 0,
-				tokens_cache_write: 0
-			},
-			date: todayWeekStart
-		};
-
-		for (const r of todayRows) {
-			todayEntry.data.tokens_input += Number(r.tokens_input ?? 0);
-			todayEntry.data.tokens_output += Number(r.tokens_output ?? 0);
-			todayEntry.data.tokens_reasoning += Number(r.tokens_reasoning ?? 0);
-			todayEntry.data.tokens_cache_read += Number(r.tokens_cache_read ?? 0);
-			todayEntry.data.tokens_cache_write += Number(r.tokens_cache_write ?? 0);
-			todayEntry.data.cost_usd += resolveCostUsd({
-				costUsd: Number(r.cost_usd ?? 0),
-				providerId: r.provider_id,
-				modelId: r.model_id,
-				tokensInput: Number(r.tokens_input ?? 0),
-				tokensOutput: Number(r.tokens_output ?? 0),
-				tokensReasoning: Number(r.tokens_reasoning ?? 0),
-				tokensCacheRead: Number(r.tokens_cache_read ?? 0),
-				tokensCacheWrite: Number(r.tokens_cache_write ?? 0)
+				date: weekEnd
 			});
 		}
-		weekMap.set(todayWeekKey, todayEntry);
+
+		for (const r of dailyRows) {
+			const [year, month, day] = r.date.split('-').map(Number);
+			const rowDate = new Date(year, month - 1, day);
+			const daysDiff = Math.floor((today.getTime() - rowDate.getTime()) / (1000 * 60 * 60 * 24));
+			const weekIndex = Math.floor(daysDiff / 7);
+			const weekEnd = new Date(today);
+			weekEnd.setDate(today.getDate() - (weekIndex * 7));
+			const weekKey = weekEnd.toISOString().split('T')[0];
+
+			const existing = weekMap.get(weekKey);
+			if (existing) {
+				existing.data.tokens_input += Number(r.tokens_input ?? 0);
+				existing.data.tokens_output += Number(r.tokens_output ?? 0);
+				existing.data.tokens_reasoning += Number(r.tokens_reasoning ?? 0);
+				existing.data.tokens_cache_read += Number(r.tokens_cache_read ?? 0);
+				existing.data.tokens_cache_write += Number(r.tokens_cache_write ?? 0);
+				existing.data.cost_usd += resolveCostUsd({
+					costUsd: Number(r.cost_usd ?? 0),
+					providerId: r.provider_id,
+					modelId: r.model_id,
+					tokensInput: Number(r.tokens_input ?? 0),
+					tokensOutput: Number(r.tokens_output ?? 0),
+					tokensReasoning: Number(r.tokens_reasoning ?? 0),
+					tokensCacheRead: Number(r.tokens_cache_read ?? 0),
+					tokensCacheWrite: Number(r.tokens_cache_write ?? 0)
+				});
+			}
+		}
+
+		const todayKey = today.toISOString().split('T')[0];
+		const todayEntry = weekMap.get(todayKey);
+		if (todayEntry) {
+			for (const r of todayRows) {
+				todayEntry.data.tokens_input += Number(r.tokens_input ?? 0);
+				todayEntry.data.tokens_output += Number(r.tokens_output ?? 0);
+				todayEntry.data.tokens_reasoning += Number(r.tokens_reasoning ?? 0);
+				todayEntry.data.tokens_cache_read += Number(r.tokens_cache_read ?? 0);
+				todayEntry.data.tokens_cache_write += Number(r.tokens_cache_write ?? 0);
+				todayEntry.data.cost_usd += resolveCostUsd({
+					costUsd: Number(r.cost_usd ?? 0),
+					providerId: r.provider_id,
+					modelId: r.model_id,
+					tokensInput: Number(r.tokens_input ?? 0),
+					tokensOutput: Number(r.tokens_output ?? 0),
+					tokensReasoning: Number(r.tokens_reasoning ?? 0),
+					tokensCacheRead: Number(r.tokens_cache_read ?? 0),
+					tokensCacheWrite: Number(r.tokens_cache_write ?? 0)
+				});
+			}
+		}
 
 		return Array.from(weekMap.values())
 			.sort((a, b) => a.date.getTime() - b.date.getTime())
