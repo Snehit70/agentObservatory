@@ -1182,7 +1182,7 @@ export const getSessionDepthStats = query(async () => {
 	};
 });
 
-type TimeRange = 'day' | 'week' | 'month' | 'year';
+type TimeRange = 'day' | 'week' | 'month' | 'all';
 
 type TimeDataPoint = {
 	label: string;
@@ -1198,7 +1198,7 @@ const timeRangeSchema = v.union([
 	v.literal('day'),
 	v.literal('week'),
 	v.literal('month'),
-	v.literal('year')
+	v.literal('all')
 ]);
 
 export const getTimeExplorerData = query(timeRangeSchema, async (range: TimeRange) => {
@@ -1484,7 +1484,7 @@ export const getTimeExplorerData = query(timeRangeSchema, async (range: TimeRang
 			.map((d) => d.data);
 	}
 
-	// year - monthly aggregation, all time
+	// all - monthly aggregation, all time
 	const monthRows = await db
 		.select({
 			month_start: sql<string>`DATE_TRUNC('month', ${dailySummary.date}::date)::text`,

@@ -53,7 +53,7 @@
 		cost_usd: number;
 	};
 	type TimeRange = 'all' | 'day' | 'week' | 'month';
-	type TimeExplorerRange = 'day' | 'week' | 'month' | 'year';
+	type TimeExplorerRange = 'day' | 'week' | 'month' | 'all';
 	type TimeExplorerDataPoint = {
 		label: string;
 		cost_usd: number;
@@ -869,7 +869,7 @@
 				<div class="range-buttons">
 					<button type="button" class="range-btn {timeExplorerViewMode === 'cost' ? 'active' : ''}" onclick={() => (timeExplorerViewMode = 'cost')}>COST</button>
 					<button type="button" class="range-btn {timeExplorerViewMode === 'tokens' ? 'active' : ''}" onclick={() => (timeExplorerViewMode = 'tokens')}>TOKENS</button>
-					{#each ['day', 'week', 'month', 'year'] as r}
+					{#each ['day', 'week', 'month', 'all'] as r}
 						<button type="button" class="range-btn {timeExplorerRange === (r as TimeExplorerRange) ? 'active' : ''}" onclick={() => (timeExplorerRange = r as TimeExplorerRange)}>
 							{r.toUpperCase()}
 						</button>
