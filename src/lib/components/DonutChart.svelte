@@ -7,9 +7,10 @@
 		width?: number;
 		height?: number;
 		showLegend?: boolean;
+		valueType?: 'cost' | 'tokens';
 	}
 
-	let { data, width = 300, height = 300, showLegend = false }: Props = $props();
+	let { data, width = 300, height = 300, showLegend = false, valueType = 'cost' }: Props = $props();
 
 	let svgElement: SVGSVGElement | undefined = $state();
 	let actualWidth = $state(0);
@@ -32,6 +33,20 @@
 		if (n >= 1) return `$${n.toFixed(2)}`;
 		return `$${n.toFixed(4)}`;
 	}
+
+	function formatTokens(n: number) {
+		if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}B`;
+		if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+		if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+		return n.toFixed(0);
+	}
+
+	function formatValue(n: number) {
+		return valueType === 'cost' ? formatUsd(n) : formatTokens(n);
+	}
+
+	let valueLabel = $derived(valueType === 'cost' ? 'Cost' : 'Tokens');
+	let centerLabel = $derived(valueType === 'cost' ? 'TOTAL COST' : 'TOTAL TOKENS');
 
 	const colors = [
 		'#3b82f6',
@@ -92,7 +107,7 @@
 		}
 
 		function resetCenter() {
-			setCenterValue(formatUsd(total), 'TOTAL COST', 'var(--color-accent)');
+			setCenterValue(formatValue(total), centerLabel, 'var(--color-accent)');
 		}
 
 		function updateTooltip(event: PointerEvent, title: string, lines: TooltipState['lines']) {
@@ -125,16 +140,16 @@
 					.attr('opacity', 1);
 
 				const share = total > 0 ? `${((d.data.value / total) * 100).toFixed(1)}%` : '—';
-				setCenterValue(formatUsd(d.data.value), d.data.label, sliceColor);
+				setCenterValue(formatValue(d.data.value), d.data.label, sliceColor);
 				updateTooltip(event as PointerEvent, d.data.label, [
-					{ label: 'Cost', value: formatUsd(d.data.value) },
+					{ label: valueLabel, value: formatValue(d.data.value) },
 					{ label: 'Share', value: share }
 				]);
 			})
 			.on('pointermove', function (event, d) {
 				const share = total > 0 ? `${((d.data.value / total) * 100).toFixed(1)}%` : '—';
 				updateTooltip(event as PointerEvent, d.data.label, [
-					{ label: 'Cost', value: formatUsd(d.data.value) },
+					{ label: valueLabel, value: formatValue(d.data.value) },
 					{ label: 'Share', value: share }
 				]);
 			})
@@ -204,16 +219,16 @@
 						.attr('opacity', 1);
 
 					const share = total > 0 ? `${((d.value / total) * 100).toFixed(1)}%` : '—';
-					setCenterValue(formatUsd(d.value), d.label, sliceColor);
+					setCenterValue(formatValue(d.value), d.label, sliceColor);
 					updateTooltip(event as PointerEvent, d.label, [
-						{ label: 'Cost', value: formatUsd(d.value) },
+						{ label: valueLabel, value: formatValue(d.value) },
 						{ label: 'Share', value: share }
 					]);
 				})
 				.on('pointermove', function (event, d) {
 					const share = total > 0 ? `${((d.value / total) * 100).toFixed(1)}%` : '—';
 					updateTooltip(event as PointerEvent, d.label, [
-						{ label: 'Cost', value: formatUsd(d.value) },
+						{ label: valueLabel, value: formatValue(d.value) },
 						{ label: 'Share', value: share }
 					]);
 				})
@@ -261,6 +276,7 @@
 		resizeObserver.observe(el);
 
 		$effect(() => {
+			void valueType;
 			if (data && actualWidth) {
 				renderChart(el);
 			}

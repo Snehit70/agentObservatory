@@ -48,6 +48,9 @@
 		request_count: number;
 		tokens_input: number;
 		tokens_output: number;
+		tokens_reasoning: number;
+		tokens_cache_read: number;
+		tokens_cache_write: number;
 		cost_usd: number;
 	};
 	type TimeRange = 'all' | 'day' | 'week' | 'month';
@@ -208,6 +211,7 @@
 	let totals = $state<Totals | null>(null);
 	let costByModel = $state<CostByModelItem[] | null>(null);
 	let modelsData = $state<CostByModelItem[] | null>(null);
+	let modelViewMode = $state<'cost' | 'tokens'>('cost');
 	let costOverTime = $state<CostOverTimeItem[] | null>(null);
 	let tokensData = $state<TokensData | null>(null);
 	let modelPerformance = $state<ModelPerformanceItem[] | null>(null);
@@ -688,17 +692,21 @@
 		costOverTime?.map((d) => ({ date: d.date, value: d.cost_usd })) ?? []
 	);
 	const modelCostLimit = 8;
-	let modelCostData = $derived.by(() => {
+	let modelChartData = $derived.by(() => {
 		const items = costByModel ?? [];
 		const topItems = items.slice(0, modelCostLimit);
+		const getTotalTokens = (d: CostByModelItem) =>
+			d.tokens_input + d.tokens_output + d.tokens_reasoning + d.tokens_cache_read + d.tokens_cache_write;
+		const getValue = (d: CostByModelItem) =>
+			modelViewMode === 'cost' ? d.cost_usd : getTotalTokens(d);
 		const topData = topItems.map((d) => ({
 			label: d.display_name,
-			value: d.cost_usd
+			value: getValue(d)
 		}));
-		const totalCost = items.reduce((sum, d) => sum + d.cost_usd, 0);
-		const topCost = topItems.reduce((sum, d) => sum + d.cost_usd, 0);
-		const otherCost = totalCost - topCost;
-		return otherCost > 0 ? [...topData, { label: 'other', value: otherCost }] : topData;
+		const totalValue = items.reduce((sum, d) => sum + getValue(d), 0);
+		const topValue = topItems.reduce((sum, d) => sum + getValue(d), 0);
+		const otherValue = totalValue - topValue;
+		return otherValue > 0 ? [...topData, { label: 'other', value: otherValue }] : topData;
 	});
 	let tokensTimeData = $derived(
 		costOverTime?.map((d) => ({
@@ -896,8 +904,10 @@
 
 		<div class="panel reveal" style="animation-delay: 240ms;">
 			<div class="section-header">
-				<h2 class="section-title">Cost by Model</h2>
+				<h2 class="section-title">{modelViewMode === 'cost' ? 'Cost' : 'Tokens'} by Model</h2>
 				<div class="range-buttons">
+					<button type="button" class="range-btn {modelViewMode === 'cost' ? 'active' : ''}" onclick={() => (modelViewMode = 'cost')}>COST</button>
+					<button type="button" class="range-btn {modelViewMode === 'tokens' ? 'active' : ''}" onclick={() => (modelViewMode = 'tokens')}>TOKENS</button>
 					{#each ['all', 'day', 'week', 'month'] as r}
 						<button type="button" class="range-btn {costByModelRange === (r as TimeRange) ? 'active' : ''}" onclick={() => (costByModelRange = r as TimeRange)}>
 							{r.toUpperCase()}
@@ -910,8 +920,8 @@
 				{@render loadingState()}
 			{:else if costByModelError}
 				{@render errorState(costByModelError, fetchCostByModel)}
-			{:else if modelCostData.length > 0}
-				<DonutChart data={modelCostData} height={280} />
+			{:else if modelChartData.length > 0}
+				<DonutChart data={modelChartData} height={280} valueType={modelViewMode} />
 			{:else}
 				<div class="text-tertiary text-sm py-8 text-center">No data available</div>
 			{/if}

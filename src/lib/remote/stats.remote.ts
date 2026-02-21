@@ -161,6 +161,9 @@ export const getCostByModel = query(v.optional(v.number()), async (days?: number
 		request_count: number;
 		tokens_input: number;
 		tokens_output: number;
+		tokens_reasoning: number;
+		tokens_cache_read: number;
+		tokens_cache_write: number;
 		cost_usd: number;
 	}>();
 
@@ -171,6 +174,9 @@ export const getCostByModel = query(v.optional(v.number()), async (days?: number
 			existing.request_count += r.request_count;
 			existing.tokens_input += r.tokens_input;
 			existing.tokens_output += r.tokens_output;
+			existing.tokens_reasoning += r.tokens_reasoning;
+			existing.tokens_cache_read += r.tokens_cache_read;
+			existing.tokens_cache_write += r.tokens_cache_write;
 			existing.cost_usd += r.cost_usd;
 		} else {
 			aggregated.set(key, {
@@ -179,6 +185,9 @@ export const getCostByModel = query(v.optional(v.number()), async (days?: number
 				request_count: r.request_count,
 				tokens_input: r.tokens_input,
 				tokens_output: r.tokens_output,
+				tokens_reasoning: r.tokens_reasoning,
+				tokens_cache_read: r.tokens_cache_read,
+				tokens_cache_write: r.tokens_cache_write,
 				cost_usd: r.cost_usd
 			});
 		}
