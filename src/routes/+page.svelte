@@ -4,12 +4,11 @@
 	import BarChart from '$lib/components/BarChart.svelte';
 	import DonutChart from '$lib/components/DonutChart.svelte';
 	import TokensChart from '$lib/components/TokensChart.svelte';
-	import TokensZoomChart from '$lib/components/TokensZoomChart.svelte';
+	import TimeExplorer from '$lib/components/TimeExplorer.svelte';
 	import {
 		getTotals,
 		getCostByModel,
-		getCostOverTime,
-		getTokensData,
+		getTimeExplorerData,
 		getModelPerformance,
 		getRecentRequests,
 		getFileTypeSummary,
@@ -54,16 +53,15 @@
 		cost_usd: number;
 	};
 	type TimeRange = 'all' | 'day' | 'week' | 'month';
-	type CostOverTimeItem = {
-		date: string;
-		request_count: number;
+	type TimeExplorerRange = 'day' | 'week' | 'month' | 'year';
+	type TimeExplorerDataPoint = {
+		label: string;
+		cost_usd: number;
 		tokens_input: number;
 		tokens_output: number;
-		cost_usd: number;
-	};
-	type TokensData = {
-		hourly: { hour: number; tokens_input: number; tokens_output: number }[];
-		daily: { date: string; tokens_input: number; tokens_output: number }[];
+		tokens_reasoning: number;
+		tokens_cache_read: number;
+		tokens_cache_write: number;
 	};
 	type ModelPerformanceItem = {
 		model_id: string;
@@ -212,8 +210,9 @@
 	let costByModel = $state<CostByModelItem[] | null>(null);
 	let modelsData = $state<CostByModelItem[] | null>(null);
 	let modelViewMode = $state<'cost' | 'tokens'>('cost');
-	let costOverTime = $state<CostOverTimeItem[] | null>(null);
-	let tokensData = $state<TokensData | null>(null);
+	let timeExplorerData = $state<TimeExplorerDataPoint[] | null>(null);
+	let timeExplorerRange = $state<TimeExplorerRange>('week');
+	let timeExplorerViewMode = $state<'cost' | 'tokens'>('cost');
 	let modelPerformance = $state<ModelPerformanceItem[] | null>(null);
 	let recentRequests = $state<RecentRequestItem[] | null>(null);
 	let fileTypeSummary = $state<FileTypeSummaryItem[] | null>(null);
@@ -240,8 +239,7 @@
 	let totalsLoading = $state(true);
 	let costByModelLoading = $state(true);
 	let modelsDataLoading = $state(true);
-	let costOverTimeLoading = $state(true);
-	let tokensDataLoading = $state(true);
+	let timeExplorerLoading = $state(true);
 	let modelPerformanceLoading = $state(true);
 	let recentRequestsLoading = $state(true);
 	let fileTypeSummaryLoading = $state(true);
@@ -266,8 +264,7 @@
 	let totalsError = $state<Error | null>(null);
 	let costByModelError = $state<Error | null>(null);
 	let modelsDataError = $state<Error | null>(null);
-	let costOverTimeError = $state<Error | null>(null);
-	let tokensDataError = $state<Error | null>(null);
+	let timeExplorerError = $state<Error | null>(null);
 	let modelPerformanceError = $state<Error | null>(null);
 	let recentRequestsError = $state<Error | null>(null);
 	let fileTypeSummaryError = $state<Error | null>(null);
@@ -346,29 +343,15 @@
 		}
 	}
 
-	async function fetchCostOverTime() {
-		costOverTimeLoading = true;
-		costOverTimeError = null;
+	async function fetchTimeExplorerData() {
+		timeExplorerLoading = true;
+		timeExplorerError = null;
 		try {
-			costOverTime = await getCostOverTime();
+			timeExplorerData = await getTimeExplorerData(timeExplorerRange);
 		} catch (e) {
-			costOverTimeError = e instanceof Error ? e : new Error('Failed to load');
+			timeExplorerError = e instanceof Error ? e : new Error('Failed to load');
 		} finally {
-			costOverTimeLoading = false;
-		}
-	}
-
-	async function fetchTokensData() {
-		tokensDataLoading = true;
-		tokensDataError = null;
-		try {
-			// Pass the user's timezone offset to get hourly data in local time
-			const tzOffsetMinutes = new Date().getTimezoneOffset();
-			tokensData = await getTokensData(tzOffsetMinutes);
-		} catch (e) {
-			tokensDataError = e instanceof Error ? e : new Error('Failed to load');
-		} finally {
-			tokensDataLoading = false;
+			timeExplorerLoading = false;
 		}
 	}
 
@@ -614,8 +597,7 @@
 		fetchTotals();
 		fetchCostByModel();
 		fetchModelsData();
-		fetchCostOverTime();
-		fetchTokensData();
+		fetchTimeExplorerData();
 		fetchModelPerformance();
 		fetchRecentRequests();
 		fetchFileTypeSummary();
@@ -640,6 +622,11 @@
 	$effect(() => {
 		costByModelRange;
 		fetchCostByModel();
+	});
+
+	$effect(() => {
+		timeExplorerRange;
+		fetchTimeExplorerData();
 	});
 
 	$effect(() => {
@@ -688,9 +675,6 @@
 	}
 
 	// Derived data for charts
-	let costTimeData = $derived(
-		costOverTime?.map((d) => ({ date: d.date, value: d.cost_usd })) ?? []
-	);
 	const modelCostLimit = 8;
 	let modelChartData = $derived.by(() => {
 		const items = costByModel ?? [];
@@ -708,13 +692,6 @@
 		const otherValue = totalValue - topValue;
 		return otherValue > 0 ? [...topData, { label: 'other', value: otherValue }] : topData;
 	});
-	let tokensTimeData = $derived(
-		costOverTime?.map((d) => ({
-			date: d.date,
-			tokens_input: d.tokens_input,
-			tokens_output: d.tokens_output
-		})) ?? []
-	);
 	let totalPrompt = $derived((totals?.total_input ?? 0) + (totals?.total_cache_read ?? 0));
 	let totalTokens = $derived(
 		(totals?.total_input ?? 0) +
@@ -888,15 +865,23 @@
 	<section class="charts-grid">
 		<div class="panel reveal" style="animation-delay: 210ms;">
 			<div class="section-header">
-				<h2 class="section-title">Cost Over Time</h2>
-				<div class="section-subtitle">last 30 days</div>
+				<h2 class="section-title">{timeExplorerViewMode === 'cost' ? 'Cost' : 'Tokens'} Over Time</h2>
+				<div class="range-buttons">
+					<button type="button" class="range-btn {timeExplorerViewMode === 'cost' ? 'active' : ''}" onclick={() => (timeExplorerViewMode = 'cost')}>COST</button>
+					<button type="button" class="range-btn {timeExplorerViewMode === 'tokens' ? 'active' : ''}" onclick={() => (timeExplorerViewMode = 'tokens')}>TOKENS</button>
+					{#each ['day', 'week', 'month', 'year'] as r}
+						<button type="button" class="range-btn {timeExplorerRange === (r as TimeExplorerRange) ? 'active' : ''}" onclick={() => (timeExplorerRange = r as TimeExplorerRange)}>
+							{r.toUpperCase()}
+						</button>
+					{/each}
+				</div>
 			</div>
-			{#if costOverTimeLoading}
+			{#if timeExplorerLoading}
 				{@render loadingState()}
-			{:else if costOverTimeError}
-				{@render errorState(costOverTimeError, fetchCostOverTime)}
-			{:else if costTimeData.length > 0}
-				<AreaChart data={costTimeData} height={220} color="var(--color-accent)" gradientId="costGrad" />
+			{:else if timeExplorerError}
+				{@render errorState(timeExplorerError, fetchTimeExplorerData)}
+			{:else if timeExplorerData && timeExplorerData.length > 0}
+				<TimeExplorer data={timeExplorerData} height={220} viewMode={timeExplorerViewMode} />
 			{:else}
 				<div class="text-tertiary text-sm py-8 text-center">No data available</div>
 			{/if}
@@ -1131,22 +1116,6 @@
 				</div>
 			{:else}
 				<div class="text-tertiary text-sm py-8 text-center">No file edit data yet</div>
-			{/if}
-		</div>
-	</section>
-
-	<!-- Tokens explorer -->
-	<section class="full-width-grid">
-		<div class="panel reveal" style="animation-delay: 345ms;">
-			<h2 class="section-title">tokens explorer</h2>
-			{#if tokensDataLoading}
-				{@render loadingState()}
-			{:else if tokensDataError}
-				{@render errorState(tokensDataError, fetchTokensData)}
-			{:else if tokensData}
-				<TokensZoomChart hourly={tokensData.hourly} daily={tokensData.daily} height={220} />
-			{:else}
-				<div class="text-tertiary text-sm py-8 text-center">No data available</div>
 			{/if}
 		</div>
 	</section>

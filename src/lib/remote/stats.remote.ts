@@ -1181,3 +1181,178 @@ export const getSessionDepthStats = query(async () => {
 		distribution
 	};
 });
+
+type TimeRange = 'day' | 'week' | 'month' | 'year';
+
+type TimeDataPoint = {
+	label: string;
+	cost_usd: number;
+	tokens_input: number;
+	tokens_output: number;
+	tokens_reasoning: number;
+	tokens_cache_read: number;
+	tokens_cache_write: number;
+};
+
+const timeRangeSchema = v.union([
+	v.literal('day'),
+	v.literal('week'),
+	v.literal('month'),
+	v.literal('year')
+]);
+
+export const getTimeExplorerData = query(timeRangeSchema, async (range: TimeRange) => {
+	if (range === 'day') {
+		const rows = await db
+			.select({
+				hour: sql<number>`EXTRACT(HOUR FROM ${requests.createdAt} AT TIME ZONE 'Asia/Kolkata')::int`,
+				tokens_input: sum(requests.tokensInput),
+				tokens_output: sum(requests.tokensOutput),
+				tokens_reasoning: sum(requests.tokensReasoning),
+				tokens_cache_read: sum(requests.tokensCacheRead),
+				tokens_cache_write: sum(requests.tokensCacheWrite),
+				cost_usd: sum(requests.costUsd),
+				provider_id: requests.providerId,
+				model_id: requests.modelId
+			})
+			.from(requests)
+			.where(
+				sql`DATE(${requests.createdAt} AT TIME ZONE 'Asia/Kolkata') = DATE(NOW() AT TIME ZONE 'Asia/Kolkata')`
+			)
+			.groupBy(sql`EXTRACT(HOUR FROM ${requests.createdAt} AT TIME ZONE 'Asia/Kolkata')`, requests.providerId, requests.modelId);
+
+		const hourMap = new Map<number, TimeDataPoint>();
+		for (const r of rows) {
+			const h = Number(r.hour);
+			const existing = hourMap.get(h) ?? {
+				label: `${String(h).padStart(2, '0')}:00`,
+				cost_usd: 0,
+				tokens_input: 0,
+				tokens_output: 0,
+				tokens_reasoning: 0,
+				tokens_cache_read: 0,
+				tokens_cache_write: 0
+			};
+			existing.tokens_input += Number(r.tokens_input ?? 0);
+			existing.tokens_output += Number(r.tokens_output ?? 0);
+			existing.tokens_reasoning += Number(r.tokens_reasoning ?? 0);
+			existing.tokens_cache_read += Number(r.tokens_cache_read ?? 0);
+			existing.tokens_cache_write += Number(r.tokens_cache_write ?? 0);
+			existing.cost_usd += resolveCostUsd({
+				costUsd: Number(r.cost_usd ?? 0),
+				providerId: r.provider_id,
+				modelId: r.model_id,
+				tokensInput: Number(r.tokens_input ?? 0),
+				tokensOutput: Number(r.tokens_output ?? 0),
+				tokensReasoning: Number(r.tokens_reasoning ?? 0),
+				tokensCacheRead: Number(r.tokens_cache_read ?? 0),
+				tokensCacheWrite: Number(r.tokens_cache_write ?? 0)
+			});
+			hourMap.set(h, existing);
+		}
+
+		return Array.from({ length: 24 }, (_, h) => {
+			const entry = hourMap.get(h);
+			return entry ?? {
+				label: `${String(h).padStart(2, '0')}:00`,
+				cost_usd: 0,
+				tokens_input: 0,
+				tokens_output: 0,
+				tokens_reasoning: 0,
+				tokens_cache_read: 0,
+				tokens_cache_write: 0
+			};
+		});
+	}
+
+	if (range === 'week') {
+		const rows = await db
+			.select({
+				date: dailySummary.date,
+				tokens_input: sum(dailySummary.tokensInput),
+				tokens_output: sum(dailySummary.tokensOutput),
+				tokens_reasoning: sum(dailySummary.tokensReasoning),
+				tokens_cache_read: sum(dailySummary.tokensCacheRead),
+				tokens_cache_write: sum(dailySummary.tokensCacheWrite),
+				cost_usd: sum(dailySummary.costUsd)
+			})
+			.from(dailySummary)
+			.where(sql`${dailySummary.date}::date >= CURRENT_DATE - INTERVAL '7 days'`)
+			.groupBy(dailySummary.date)
+			.orderBy(dailySummary.date);
+
+		return rows.map((r) => {
+			const [year, month, day] = r.date.split('-').map(Number);
+			const date = new Date(year, month - 1, day);
+			return {
+				label: date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }),
+				cost_usd: Number(r.cost_usd ?? 0),
+				tokens_input: Number(r.tokens_input ?? 0),
+				tokens_output: Number(r.tokens_output ?? 0),
+				tokens_reasoning: Number(r.tokens_reasoning ?? 0),
+				tokens_cache_read: Number(r.tokens_cache_read ?? 0),
+				tokens_cache_write: Number(r.tokens_cache_write ?? 0)
+			};
+		});
+	}
+
+	if (range === 'month') {
+		const rows = await db
+			.select({
+				week_start: sql<string>`DATE_TRUNC('week', ${dailySummary.date}::date)::text`,
+				tokens_input: sum(dailySummary.tokensInput),
+				tokens_output: sum(dailySummary.tokensOutput),
+				tokens_reasoning: sum(dailySummary.tokensReasoning),
+				tokens_cache_read: sum(dailySummary.tokensCacheRead),
+				tokens_cache_write: sum(dailySummary.tokensCacheWrite),
+				cost_usd: sum(dailySummary.costUsd)
+			})
+			.from(dailySummary)
+			.where(sql`${dailySummary.date}::date >= CURRENT_DATE - INTERVAL '30 days'`)
+			.groupBy(sql`DATE_TRUNC('week', ${dailySummary.date}::date)`)
+			.orderBy(sql`DATE_TRUNC('week', ${dailySummary.date}::date)`);
+
+		return rows.map((r) => {
+			const [year, month, day] = r.week_start.split('-').map(Number);
+			const date = new Date(year, month - 1, day);
+			return {
+				label: `Week of ${date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`,
+				cost_usd: Number(r.cost_usd ?? 0),
+				tokens_input: Number(r.tokens_input ?? 0),
+				tokens_output: Number(r.tokens_output ?? 0),
+				tokens_reasoning: Number(r.tokens_reasoning ?? 0),
+				tokens_cache_read: Number(r.tokens_cache_read ?? 0),
+				tokens_cache_write: Number(r.tokens_cache_write ?? 0)
+			};
+		});
+	}
+
+	// year - monthly aggregation, all time
+	const rows = await db
+		.select({
+			month_start: sql<string>`DATE_TRUNC('month', ${dailySummary.date}::date)::text`,
+			tokens_input: sum(dailySummary.tokensInput),
+			tokens_output: sum(dailySummary.tokensOutput),
+			tokens_reasoning: sum(dailySummary.tokensReasoning),
+			tokens_cache_read: sum(dailySummary.tokensCacheRead),
+			tokens_cache_write: sum(dailySummary.tokensCacheWrite),
+			cost_usd: sum(dailySummary.costUsd)
+		})
+		.from(dailySummary)
+		.groupBy(sql`DATE_TRUNC('month', ${dailySummary.date}::date)`)
+		.orderBy(sql`DATE_TRUNC('month', ${dailySummary.date}::date)`);
+
+	return rows.map((r) => {
+		const [year, month] = r.month_start.split('-').map(Number);
+		const date = new Date(year, month - 1, 1);
+		return {
+			label: date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
+			cost_usd: Number(r.cost_usd ?? 0),
+			tokens_input: Number(r.tokens_input ?? 0),
+			tokens_output: Number(r.tokens_output ?? 0),
+			tokens_reasoning: Number(r.tokens_reasoning ?? 0),
+			tokens_cache_read: Number(r.tokens_cache_read ?? 0),
+			tokens_cache_write: Number(r.tokens_cache_write ?? 0)
+		};
+	});
+});
