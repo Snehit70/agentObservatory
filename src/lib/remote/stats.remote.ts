@@ -1216,9 +1216,7 @@ export const getTimeExplorerData = query(timeRangeSchema, async (range: TimeRang
 				model_id: requests.modelId
 			})
 			.from(requests)
-			.where(
-				sql`DATE(${requests.createdAt} AT TIME ZONE 'Asia/Kolkata') = DATE(NOW() AT TIME ZONE 'Asia/Kolkata')`
-			)
+			.where(sql`${requests.createdAt} >= NOW() - INTERVAL '24 hours'`)
 			.groupBy(sql`EXTRACT(HOUR FROM ${requests.createdAt} AT TIME ZONE 'Asia/Kolkata')`, requests.providerId, requests.modelId);
 
 		const hourMap = new Map<number, TimeDataPoint>();
@@ -1251,9 +1249,12 @@ export const getTimeExplorerData = query(timeRangeSchema, async (range: TimeRang
 			hourMap.set(h, existing);
 		}
 
-		return Array.from({ length: 24 }, (_, h) => {
+		const currentHour = new Date().getHours();
+		const result: TimeDataPoint[] = [];
+		for (let i = 0; i < 24; i++) {
+			const h = (currentHour - 23 + i + 24) % 24;
 			const entry = hourMap.get(h);
-			return entry ?? {
+			result.push(entry ?? {
 				label: `${String(h).padStart(2, '0')}:00`,
 				cost_usd: 0,
 				tokens_input: 0,
@@ -1261,12 +1262,13 @@ export const getTimeExplorerData = query(timeRangeSchema, async (range: TimeRang
 				tokens_reasoning: 0,
 				tokens_cache_read: 0,
 				tokens_cache_write: 0
-			};
-		});
+			});
+		}
+		return result;
 	}
 
 	if (range === 'week') {
-		const rows = await db
+		const dailyRows = await db
 			.select({
 				date: dailySummary.date,
 				provider_id: dailySummary.providerId,
@@ -1279,12 +1281,27 @@ export const getTimeExplorerData = query(timeRangeSchema, async (range: TimeRang
 				cost_usd: sum(dailySummary.costUsd)
 			})
 			.from(dailySummary)
-			.where(sql`${dailySummary.date}::date >= CURRENT_DATE - INTERVAL '7 days'`)
+			.where(sql`${dailySummary.date}::date >= CURRENT_DATE - INTERVAL '7 days' AND ${dailySummary.date}::date < CURRENT_DATE`)
 			.groupBy(dailySummary.date, dailySummary.providerId, dailySummary.modelId)
 			.orderBy(dailySummary.date);
 
+		const todayRows = await db
+			.select({
+				provider_id: requests.providerId,
+				model_id: requests.modelId,
+				tokens_input: sum(requests.tokensInput),
+				tokens_output: sum(requests.tokensOutput),
+				tokens_reasoning: sum(requests.tokensReasoning),
+				tokens_cache_read: sum(requests.tokensCacheRead),
+				tokens_cache_write: sum(requests.tokensCacheWrite),
+				cost_usd: sum(requests.costUsd)
+			})
+			.from(requests)
+			.where(sql`${requests.createdAt}::date = CURRENT_DATE`)
+			.groupBy(requests.providerId, requests.modelId);
+
 		const dateMap = new Map<string, { data: TimeDataPoint; date: Date }>();
-		for (const r of rows) {
+		for (const r of dailyRows) {
 			const existing = dateMap.get(r.date) ?? {
 				data: {
 					label: '',
@@ -1319,15 +1336,48 @@ export const getTimeExplorerData = query(timeRangeSchema, async (range: TimeRang
 			dateMap.set(r.date, existing);
 		}
 
+		const today = new Date();
+		const todayKey = today.toISOString().split('T')[0];
+		const todayEntry = {
+			data: {
+				label: today.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }),
+				cost_usd: 0,
+				tokens_input: 0,
+				tokens_output: 0,
+				tokens_reasoning: 0,
+				tokens_cache_read: 0,
+				tokens_cache_write: 0
+			},
+			date: today
+		};
+		for (const r of todayRows) {
+			todayEntry.data.tokens_input += Number(r.tokens_input ?? 0);
+			todayEntry.data.tokens_output += Number(r.tokens_output ?? 0);
+			todayEntry.data.tokens_reasoning += Number(r.tokens_reasoning ?? 0);
+			todayEntry.data.tokens_cache_read += Number(r.tokens_cache_read ?? 0);
+			todayEntry.data.tokens_cache_write += Number(r.tokens_cache_write ?? 0);
+			todayEntry.data.cost_usd += resolveCostUsd({
+				costUsd: Number(r.cost_usd ?? 0),
+				providerId: r.provider_id,
+				modelId: r.model_id,
+				tokensInput: Number(r.tokens_input ?? 0),
+				tokensOutput: Number(r.tokens_output ?? 0),
+				tokensReasoning: Number(r.tokens_reasoning ?? 0),
+				tokensCacheRead: Number(r.tokens_cache_read ?? 0),
+				tokensCacheWrite: Number(r.tokens_cache_write ?? 0)
+			});
+		}
+		dateMap.set(todayKey, todayEntry);
+
 		return Array.from(dateMap.values())
 			.sort((a, b) => a.date.getTime() - b.date.getTime())
 			.map((d) => d.data);
 	}
 
 	if (range === 'month') {
-		const rows = await db
+		const dailyRows = await db
 			.select({
-				week_start: sql<string>`DATE_TRUNC('week', ${dailySummary.date}::date)::text`,
+				date: dailySummary.date,
 				provider_id: dailySummary.providerId,
 				model_id: dailySummary.modelId,
 				tokens_input: sum(dailySummary.tokensInput),
@@ -1338,13 +1388,34 @@ export const getTimeExplorerData = query(timeRangeSchema, async (range: TimeRang
 				cost_usd: sum(dailySummary.costUsd)
 			})
 			.from(dailySummary)
-			.where(sql`${dailySummary.date}::date >= CURRENT_DATE - INTERVAL '30 days'`)
-			.groupBy(sql`DATE_TRUNC('week', ${dailySummary.date}::date)`, dailySummary.providerId, dailySummary.modelId)
-			.orderBy(sql`DATE_TRUNC('week', ${dailySummary.date}::date)`);
+			.where(sql`${dailySummary.date}::date >= CURRENT_DATE - INTERVAL '30 days' AND ${dailySummary.date}::date < CURRENT_DATE`)
+			.groupBy(dailySummary.date, dailySummary.providerId, dailySummary.modelId);
+
+		const todayRows = await db
+			.select({
+				provider_id: requests.providerId,
+				model_id: requests.modelId,
+				tokens_input: sum(requests.tokensInput),
+				tokens_output: sum(requests.tokensOutput),
+				tokens_reasoning: sum(requests.tokensReasoning),
+				tokens_cache_read: sum(requests.tokensCacheRead),
+				tokens_cache_write: sum(requests.tokensCacheWrite),
+				cost_usd: sum(requests.costUsd)
+			})
+			.from(requests)
+			.where(sql`${requests.createdAt}::date = CURRENT_DATE`)
+			.groupBy(requests.providerId, requests.modelId);
 
 		const weekMap = new Map<string, { data: TimeDataPoint; date: Date }>();
-		for (const r of rows) {
-			const existing = weekMap.get(r.week_start) ?? {
+
+		for (const r of dailyRows) {
+			const [year, month, day] = r.date.split('-').map(Number);
+			const date = new Date(year, month - 1, day);
+			const weekStart = new Date(date);
+			weekStart.setDate(date.getDate() - date.getDay());
+			const weekKey = weekStart.toISOString().split('T')[0];
+
+			const existing = weekMap.get(weekKey) ?? {
 				data: {
 					label: '',
 					cost_usd: 0,
@@ -1354,13 +1425,9 @@ export const getTimeExplorerData = query(timeRangeSchema, async (range: TimeRang
 					tokens_cache_read: 0,
 					tokens_cache_write: 0
 				},
-				date: new Date(0)
+				date: weekStart
 			};
-			const datePart = r.week_start.split(' ')[0];
-			const [year, month, day] = datePart.split('-').map(Number);
-			const date = new Date(year, month - 1, day);
-			existing.date = date;
-			existing.data.label = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+			existing.data.label = weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 			existing.data.tokens_input += Number(r.tokens_input ?? 0);
 			existing.data.tokens_output += Number(r.tokens_output ?? 0);
 			existing.data.tokens_reasoning += Number(r.tokens_reasoning ?? 0);
@@ -1376,8 +1443,45 @@ export const getTimeExplorerData = query(timeRangeSchema, async (range: TimeRang
 				tokensCacheRead: Number(r.tokens_cache_read ?? 0),
 				tokensCacheWrite: Number(r.tokens_cache_write ?? 0)
 			});
-			weekMap.set(r.week_start, existing);
+			weekMap.set(weekKey, existing);
 		}
+
+		const today = new Date();
+		const todayWeekStart = new Date(today);
+		todayWeekStart.setDate(today.getDate() - today.getDay());
+		const todayWeekKey = todayWeekStart.toISOString().split('T')[0];
+
+		const todayEntry = weekMap.get(todayWeekKey) ?? {
+			data: {
+				label: todayWeekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+				cost_usd: 0,
+				tokens_input: 0,
+				tokens_output: 0,
+				tokens_reasoning: 0,
+				tokens_cache_read: 0,
+				tokens_cache_write: 0
+			},
+			date: todayWeekStart
+		};
+
+		for (const r of todayRows) {
+			todayEntry.data.tokens_input += Number(r.tokens_input ?? 0);
+			todayEntry.data.tokens_output += Number(r.tokens_output ?? 0);
+			todayEntry.data.tokens_reasoning += Number(r.tokens_reasoning ?? 0);
+			todayEntry.data.tokens_cache_read += Number(r.tokens_cache_read ?? 0);
+			todayEntry.data.tokens_cache_write += Number(r.tokens_cache_write ?? 0);
+			todayEntry.data.cost_usd += resolveCostUsd({
+				costUsd: Number(r.cost_usd ?? 0),
+				providerId: r.provider_id,
+				modelId: r.model_id,
+				tokensInput: Number(r.tokens_input ?? 0),
+				tokensOutput: Number(r.tokens_output ?? 0),
+				tokensReasoning: Number(r.tokens_reasoning ?? 0),
+				tokensCacheRead: Number(r.tokens_cache_read ?? 0),
+				tokensCacheWrite: Number(r.tokens_cache_write ?? 0)
+			});
+		}
+		weekMap.set(todayWeekKey, todayEntry);
 
 		return Array.from(weekMap.values())
 			.sort((a, b) => a.date.getTime() - b.date.getTime())
@@ -1385,7 +1489,7 @@ export const getTimeExplorerData = query(timeRangeSchema, async (range: TimeRang
 	}
 
 	// year - monthly aggregation, all time
-	const rows = await db
+	const monthRows = await db
 		.select({
 			month_start: sql<string>`DATE_TRUNC('month', ${dailySummary.date}::date)::text`,
 			provider_id: dailySummary.providerId,
@@ -1398,11 +1502,27 @@ export const getTimeExplorerData = query(timeRangeSchema, async (range: TimeRang
 			cost_usd: sum(dailySummary.costUsd)
 		})
 		.from(dailySummary)
+		.where(sql`${dailySummary.date}::date < CURRENT_DATE`)
 		.groupBy(sql`DATE_TRUNC('month', ${dailySummary.date}::date)`, dailySummary.providerId, dailySummary.modelId)
 		.orderBy(sql`DATE_TRUNC('month', ${dailySummary.date}::date)`);
 
+	const todayMonthRows = await db
+		.select({
+			provider_id: requests.providerId,
+			model_id: requests.modelId,
+			tokens_input: sum(requests.tokensInput),
+			tokens_output: sum(requests.tokensOutput),
+			tokens_reasoning: sum(requests.tokensReasoning),
+			tokens_cache_read: sum(requests.tokensCacheRead),
+			tokens_cache_write: sum(requests.tokensCacheWrite),
+			cost_usd: sum(requests.costUsd)
+		})
+		.from(requests)
+		.where(sql`${requests.createdAt}::date = CURRENT_DATE`)
+		.groupBy(requests.providerId, requests.modelId);
+
 	const monthMap = new Map<string, { data: TimeDataPoint; date: Date }>();
-	for (const r of rows) {
+	for (const r of monthRows) {
 		const existing = monthMap.get(r.month_start) ?? {
 			data: {
 				label: '',
@@ -1437,6 +1557,41 @@ export const getTimeExplorerData = query(timeRangeSchema, async (range: TimeRang
 		});
 		monthMap.set(r.month_start, existing);
 	}
+
+	const today = new Date();
+	const todayMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+	const todayMonthKey = todayMonth.toISOString().split('T')[0];
+	const todayMonthEntry = monthMap.get(`${todayMonthKey} 00:00:00`) ?? {
+		data: {
+			label: todayMonth.toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
+			cost_usd: 0,
+			tokens_input: 0,
+			tokens_output: 0,
+			tokens_reasoning: 0,
+			tokens_cache_read: 0,
+			tokens_cache_write: 0
+		},
+		date: todayMonth
+	};
+
+	for (const r of todayMonthRows) {
+		todayMonthEntry.data.tokens_input += Number(r.tokens_input ?? 0);
+		todayMonthEntry.data.tokens_output += Number(r.tokens_output ?? 0);
+		todayMonthEntry.data.tokens_reasoning += Number(r.tokens_reasoning ?? 0);
+		todayMonthEntry.data.tokens_cache_read += Number(r.tokens_cache_read ?? 0);
+		todayMonthEntry.data.tokens_cache_write += Number(r.tokens_cache_write ?? 0);
+		todayMonthEntry.data.cost_usd += resolveCostUsd({
+			costUsd: Number(r.cost_usd ?? 0),
+			providerId: r.provider_id,
+			modelId: r.model_id,
+			tokensInput: Number(r.tokens_input ?? 0),
+			tokensOutput: Number(r.tokens_output ?? 0),
+			tokensReasoning: Number(r.tokens_reasoning ?? 0),
+			tokensCacheRead: Number(r.tokens_cache_read ?? 0),
+			tokensCacheWrite: Number(r.tokens_cache_write ?? 0)
+		});
+	}
+	monthMap.set(`${todayMonthKey} 00:00:00`, todayMonthEntry);
 
 	return Array.from(monthMap.values())
 		.sort((a, b) => a.date.getTime() - b.date.getTime())
