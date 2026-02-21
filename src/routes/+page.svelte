@@ -167,6 +167,9 @@
 		monthly_projection: number;
 		yearly_projection: number;
 		based_on_days: number;
+		mtd_cost: number;
+		mtd_days: number;
+		days_remaining_in_month: number;
 	};
 	type ActivityHeatmapItem = {
 		day_of_week: number;
@@ -234,6 +237,8 @@
 	let sessionDepthStats = $state<SessionDepthStats | null>(null);
 	let costByModelRange = $state<TimeRange>('all');
 	let modelPerformanceRange = $state<TimeRange>('all');
+	let costMetricsRange = $state<TimeRange>('all');
+	let performanceMetricsRange = $state<TimeRange>('all');
 
 	// Loading states
 	let totalsLoading = $state(true);
@@ -295,7 +300,15 @@
 		totalsLoading = true;
 		totalsError = null;
 		try {
-			totals = await getTotals();
+			const days =
+				costMetricsRange === 'day'
+					? 1
+					: costMetricsRange === 'week'
+						? 7
+						: costMetricsRange === 'month'
+							? 30
+							: undefined;
+			totals = await getTotals(days);
 		} catch (e) {
 			totalsError = e instanceof Error ? e : new Error('Failed to load');
 		} finally {
@@ -417,7 +430,15 @@
 		toolSuccessSummaryLoading = true;
 		toolSuccessSummaryError = null;
 		try {
-			toolSuccessSummary = await getToolSuccessSummary();
+			const days =
+				performanceMetricsRange === 'day'
+					? 1
+					: performanceMetricsRange === 'week'
+						? 7
+						: performanceMetricsRange === 'month'
+							? 30
+							: undefined;
+			toolSuccessSummary = await getToolSuccessSummary(days);
 		} catch (e) {
 			toolSuccessSummaryError = e instanceof Error ? e : new Error('Failed to load');
 		} finally {
@@ -441,7 +462,15 @@
 		latencyStatsLoading = true;
 		latencyStatsError = null;
 		try {
-			latencyStats = await getLatencyStats();
+			const days =
+				performanceMetricsRange === 'day'
+					? 1
+					: performanceMetricsRange === 'week'
+						? 7
+						: performanceMetricsRange === 'month'
+							? 30
+							: undefined;
+			latencyStats = await getLatencyStats(days);
 		} catch (e) {
 			latencyStatsError = e instanceof Error ? e : new Error('Failed to load');
 		} finally {
@@ -453,8 +482,9 @@
 		costTrendLoading = true;
 		costTrendError = null;
 		try {
-			costTrend = await getCostTrend();
+			costTrend = await getCostTrend(7);
 		} catch (e) {
+			console.error('costTrend error:', e);
 			costTrendError = e instanceof Error ? e : new Error('Failed to load');
 		} finally {
 			costTrendLoading = false;
@@ -489,7 +519,7 @@
 		costForecastLoading = true;
 		costForecastError = null;
 		try {
-			costForecast = await getCostForecast();
+			costForecast = await getCostForecast(7);
 		} catch (e) {
 			costForecastError = e instanceof Error ? e : new Error('Failed to load');
 		} finally {
@@ -525,7 +555,15 @@
 		avgTokensPerRequestLoading = true;
 		avgTokensPerRequestError = null;
 		try {
-			avgTokensPerRequest = await getAvgTokensPerRequest();
+			const days =
+				performanceMetricsRange === 'day'
+					? 1
+					: performanceMetricsRange === 'week'
+						? 7
+						: performanceMetricsRange === 'month'
+							? 30
+							: undefined;
+			avgTokensPerRequest = await getAvgTokensPerRequest(days);
 		} catch (e) {
 			avgTokensPerRequestError = e instanceof Error ? e : new Error('Failed to load');
 		} finally {
@@ -549,7 +587,15 @@
 		cacheHitRateLoading = true;
 		cacheHitRateError = null;
 		try {
-			cacheHitRate = await getCacheHitRate();
+			const days =
+				performanceMetricsRange === 'day'
+					? 1
+					: performanceMetricsRange === 'week'
+						? 7
+						: performanceMetricsRange === 'month'
+							? 30
+							: undefined;
+			cacheHitRate = await getCacheHitRate(days);
 		} catch (e) {
 			cacheHitRateError = e instanceof Error ? e : new Error('Failed to load');
 		} finally {
@@ -636,6 +682,19 @@
 	});
 
 	$effect(() => {
+		costMetricsRange;
+		fetchTotals();
+	});
+
+	$effect(() => {
+		performanceMetricsRange;
+		fetchLatencyStats();
+		fetchToolSuccessSummary();
+		fetchAvgTokensPerRequest();
+		fetchCacheHitRate();
+	});
+
+	$effect(() => {
 		untrack(() => refreshAll());
 
 		const interval = setInterval(() => {
@@ -705,9 +764,10 @@
 		return totals.total_cost / (totalTokens / 1_000_000);
 	});
 	let topModelShare = $derived.by(() => {
-		const top = costByModel?.[0];
-		if (!top || !totals || totals.total_cost <= 0) return 0;
-		return top.cost_usd / totals.total_cost;
+		if (!costByModel || costByModel.length === 0) return 0;
+		const totalCost = costByModel.reduce((sum, m) => sum + m.cost_usd, 0);
+		if (totalCost <= 0) return 0;
+		return costByModel[0].cost_usd / totalCost;
 	});
 	let toolSuccessRate = $derived.by(() => toolSuccessSummary?.success_rate ?? 0);
 	let tokenEfficiency = $derived.by(() => {
@@ -914,13 +974,22 @@
 	</section>
 
 	<!-- TIER 3: COST METRICS -->
-	<h3 class="grouped-section-title">Cost Metrics</h3>
+	<div class="section-header">
+		<h3 class="grouped-section-title">Cost Metrics</h3>
+		<div class="range-buttons">
+			{#each ['all', 'day', 'week', 'month'] as r}
+				<button type="button" class="range-btn {costMetricsRange === (r as TimeRange) ? 'active' : ''}" onclick={() => (costMetricsRange = r as TimeRange)}>
+					{r.toUpperCase()}
+				</button>
+			{/each}
+		</div>
+	</div>
 	<section class="stats-grid-4">
 		<div class="stat-card reveal" style="animation-delay: 225ms;">
 			<div class="stat-label">Cost / 1M Tokens</div>
 			{#if totalsLoading}<div class="stat-value pulse">--</div>
 			{:else}<div class="stat-value accent">{formatCost(costPer1MTokens)}</div>{/if}
-			<div class="stat-sublabel">all time average</div>
+			<div class="stat-sublabel">{costMetricsRange === 'all' ? 'all time' : 'last ' + costMetricsRange}</div>
 		</div>
 		<div class="stat-card reveal" style="animation-delay: 250ms;">
 			<div class="stat-label">Top Model Share</div>
@@ -940,18 +1009,27 @@
 			<div class="stat-label">Monthly Forecast</div>
 			{#if costForecastLoading}<div class="stat-value pulse">--</div>
 			{:else}<div class="stat-value accent">{formatCost(costForecast?.monthly_projection ?? 0)}</div>{/if}
-			<div class="stat-sublabel">{formatCost(costForecast?.daily_rate ?? 0)}/day · based on {costForecast?.based_on_days ?? 0}d</div>
+			<div class="stat-sublabel">MTD: {formatCost(costForecast?.mtd_cost ?? 0)} · {formatCost(costForecast?.daily_rate ?? 0)}/day</div>
 		</div>
 	</section>
 
 	<!-- TIER 3: PERFORMANCE METRICS -->
-	<h3 class="grouped-section-title">Performance Metrics</h3>
+	<div class="section-header">
+		<h3 class="grouped-section-title">Performance Metrics</h3>
+		<div class="range-buttons">
+			{#each ['all', 'day', 'week', 'month'] as r}
+				<button type="button" class="range-btn {performanceMetricsRange === (r as TimeRange) ? 'active' : ''}" onclick={() => (performanceMetricsRange = r as TimeRange)}>
+					{r.toUpperCase()}
+				</button>
+			{/each}
+		</div>
+	</div>
 	<section class="stats-grid-4">
 		<div class="stat-card reveal" style="animation-delay: 325ms;">
 			<div class="stat-label">Latency P95</div>
 			{#if latencyStatsLoading}<div class="stat-value pulse">--</div>
 			{:else}<div class="stat-value">{formatDuration(latencyStats?.p95_ms ?? 0)}</div>{/if}
-			<div class="stat-sublabel">avg {formatDuration(latencyStats?.avg_ms ?? 0)}</div>
+			<div class="stat-sublabel">avg {formatDuration(latencyStats?.avg_ms ?? 0)} · {performanceMetricsRange === 'all' ? 'all time' : 'last ' + performanceMetricsRange}</div>
 		</div>
 		<div class="stat-card reveal" style="animation-delay: 350ms;">
 			<div class="stat-label">Tool Success</div>

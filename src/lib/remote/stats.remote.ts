@@ -5,9 +5,8 @@ import { requests, dailySummary, toolCalls, fileEdits, turns } from '$lib/db/sch
 import { desc, sql, sum, count, avg, isNotNull, and, notInArray } from 'drizzle-orm';
 import * as v from 'valibot';
 
-// Totals query - aggregate stats
-export const getTotals = query(async () => {
-	const rows = await db
+export const getTotals = query(v.optional(v.number()), async (days?: number) => {
+	const baseQuery = db
 		.select({
 			request_count: count(),
 			tokens_input: sum(requests.tokensInput),
@@ -19,8 +18,14 @@ export const getTotals = query(async () => {
 			provider_id: requests.providerId,
 			model_id: requests.modelId
 		})
-		.from(requests)
-		.groupBy(requests.modelId, requests.providerId);
+		.from(requests);
+
+	const filteredQuery =
+		days != null
+			? baseQuery.where(sql`${requests.createdAt} >= NOW() - make_interval(days => ${days})`)
+			: baseQuery;
+
+	const rows = await filteredQuery.groupBy(requests.modelId, requests.providerId);
 
 	const totals = rows.reduce(
 		(acc, row) => {
@@ -64,7 +69,15 @@ export const getTotals = query(async () => {
 	return totals;
 });
 
-export const getLatencyStats = query(async () => {
+export const getLatencyStats = query(v.optional(v.number()), async (days?: number) => {
+	const whereClause =
+		days != null
+			? and(
+					isNotNull(requests.durationMs),
+					sql`${requests.createdAt} >= NOW() - make_interval(days => ${days})`
+				)
+			: isNotNull(requests.durationMs);
+
 	const [row] = await db
 		.select({
 			avg_ms: avg(requests.durationMs),
@@ -72,7 +85,7 @@ export const getLatencyStats = query(async () => {
 			total: count()
 		})
 		.from(requests)
-		.where(isNotNull(requests.durationMs));
+		.where(whereClause);
 
 	return {
 		avg_ms: Number(row?.avg_ms ?? 0),
@@ -490,7 +503,15 @@ export const getToolStatsOverTime = query(async () => {
 	}));
 });
 
-export const getToolSuccessSummary = query(async () => {
+export const getToolSuccessSummary = query(v.optional(v.number()), async (days?: number) => {
+	const whereClause =
+		days != null
+			? and(
+					isNotNull(toolCalls.completedAt),
+					sql`${toolCalls.startedAt} >= NOW() - make_interval(days => ${days})`
+				)
+			: isNotNull(toolCalls.completedAt);
+
 	const [row] = await db
 		.select({
 			total: count(),
@@ -498,7 +519,7 @@ export const getToolSuccessSummary = query(async () => {
 			failure_count: sql<number>`COUNT(*) FILTER (WHERE ${toolCalls.success} = false)`
 		})
 		.from(toolCalls)
-		.where(isNotNull(toolCalls.completedAt));
+		.where(whereClause);
 
 	const total = Number(row?.total ?? 0);
 	const successCount = Number(row?.success_count ?? 0);
@@ -756,25 +777,58 @@ export const getFileTypeSummary = query(async () => {
 		.sort((a, b) => b.total_lines_added - a.total_lines_added);
 });
 
-// Cost trend - today vs 7-day average
-export const getCostTrend = query(async () => {
-	const dailyCosts = await db
+// Cost trend - today vs N-day average
+export const getCostTrend = query(v.optional(v.number()), async (days?: number) => {
+	const lookbackDays = days ?? 7;
+	const rows = await db
 		.select({
 			date: sql<string>`DATE(${requests.createdAt})::text`,
+			provider_id: requests.providerId,
+			model_id: requests.modelId,
+			tokens_input: sum(requests.tokensInput),
+			tokens_output: sum(requests.tokensOutput),
+			tokens_reasoning: sum(requests.tokensReasoning),
+			tokens_cache_read: sum(requests.tokensCacheRead),
+			tokens_cache_write: sum(requests.tokensCacheWrite),
 			cost_usd: sum(requests.costUsd)
 		})
 		.from(requests)
-		.where(sql`DATE(${requests.createdAt}) >= CURRENT_DATE - INTERVAL '7 days'`)
-		.groupBy(sql`DATE(${requests.createdAt})`);
+		.where(sql`DATE(${requests.createdAt}) >= CURRENT_DATE - make_interval(days => ${lookbackDays})`)
+		.groupBy(sql`DATE(${requests.createdAt})`, requests.providerId, requests.modelId);
+
+	const costByDate = new Map<string, number>();
+	for (const row of rows) {
+		const date = row.date;
+		const tokensInput = Number(row.tokens_input ?? 0);
+		const tokensOutput = Number(row.tokens_output ?? 0);
+		const tokensReasoning = Number(row.tokens_reasoning ?? 0);
+		const tokensCacheRead = Number(row.tokens_cache_read ?? 0);
+		const tokensCacheWrite = Number(row.tokens_cache_write ?? 0);
+		const costUsd = Number(row.cost_usd ?? 0);
+		const resolvedCost = resolveCostUsd({
+			costUsd,
+			providerId: row.provider_id,
+			modelId: row.model_id,
+			tokensInput,
+			tokensOutput,
+			tokensReasoning,
+			tokensCacheRead,
+			tokensCacheWrite
+		});
+		costByDate.set(date, (costByDate.get(date) ?? 0) + resolvedCost);
+	}
 
 	const today = new Date().toISOString().split('T')[0];
-	const todayData = dailyCosts.find((d) => d.date === today);
-	const pastDays = dailyCosts.filter((d) => d.date !== today);
-
-	const todayCost = Number(todayData?.cost_usd ?? 0);
-	const avgCost = pastDays.length > 0
-		? pastDays.reduce((sum, d) => sum + Number(d.cost_usd ?? 0), 0) / pastDays.length
-		: 0;
+	const todayCost = costByDate.get(today) ?? 0;
+	let totalPastCost = 0;
+	let pastDaysCount = 0;
+	for (const [date, cost] of costByDate) {
+		if (date !== today) {
+			totalPastCost += cost;
+			pastDaysCount++;
+		}
+	}
+	const avgCost = pastDaysCount > 0 ? totalPastCost / pastDaysCount : 0;
 
 	let trend: 'up' | 'down' | 'neutral' = 'neutral';
 	let percentChange = 0;
@@ -788,27 +842,45 @@ export const getCostTrend = query(async () => {
 	return {
 		today_cost: todayCost,
 		avg_7day_cost: avgCost,
-		days_in_avg: pastDays.length,
+		days_in_avg: pastDaysCount,
 		trend,
 		percent_change: percentChange
 	};
 });
 
 export const getSessionStats = query(async () => {
-	const sessionStats = await db
+	const sessionTimes = await db
 		.select({
 			session_id: requests.sessionId,
-			total_duration_ms: sum(requests.durationMs),
-			request_count: count()
+			first_request: sql<Date>`MIN(${requests.createdAt})`,
+			last_request: sql<Date>`MAX(${requests.createdAt})`,
+			request_count: count(),
+			total_tokens: sql<number>`COALESCE(SUM(${requests.tokensInput}), 0) + COALESCE(SUM(${requests.tokensOutput}), 0)`
 		})
 		.from(requests)
-		.where(isNotNull(requests.durationMs))
 		.groupBy(requests.sessionId);
 
-	const durations = sessionStats.map((s) => Number(s.total_duration_ms ?? 0));
-	const totalSessions = sessionStats.length;
-	const avgDurationMs = totalSessions > 0 ? durations.reduce((a, b) => a + b, 0) / totalSessions : 0;
-	const longestDurationMs = totalSessions > 0 ? Math.max(...durations) : 0;
+	const MIN_TOKENS_THRESHOLD = 100;
+	const MIN_DURATION_MS = 30000;
+
+	const validSessions = sessionTimes.filter((s) => {
+		const tokens = Number(s.total_tokens ?? 0);
+		return tokens >= MIN_TOKENS_THRESHOLD;
+	});
+
+	const durations = validSessions.map((s) => {
+		const first = s.first_request ? new Date(s.first_request).getTime() : 0;
+		const last = s.last_request ? new Date(s.last_request).getTime() : 0;
+		return last - first;
+	});
+
+	const meaningfulDurations = durations.filter((d) => d >= MIN_DURATION_MS);
+
+	const totalSessions = validSessions.length;
+	const avgDurationMs = meaningfulDurations.length > 0
+		? meaningfulDurations.reduce((a, b) => a + b, 0) / meaningfulDurations.length
+		: 0;
+	const longestDurationMs = meaningfulDurations.length > 0 ? Math.max(...meaningfulDurations) : 0;
 
 	const [sessionsPerDayRow] = await db
 		.select({
@@ -863,28 +935,97 @@ export const getModelDiversity = query(async () => {
 });
 
 // Cost forecast - projected monthly cost based on recent rate
-export const getCostForecast = query(async () => {
-	// Get cost from last 7 days
-	const [recentRow] = await db
+export const getCostForecast = query(v.optional(v.number()), async (lookbackDays?: number) => {
+	const daysToLookBack = lookbackDays ?? 7;
+	const recentRows = await db
 		.select({
-			total_cost: sum(requests.costUsd),
-			days: sql<number>`COUNT(DISTINCT DATE(${requests.createdAt}))`
+			provider_id: requests.providerId,
+			model_id: requests.modelId,
+			tokens_input: sum(requests.tokensInput),
+			tokens_output: sum(requests.tokensOutput),
+			tokens_reasoning: sum(requests.tokensReasoning),
+			tokens_cache_read: sum(requests.tokensCacheRead),
+			tokens_cache_write: sum(requests.tokensCacheWrite),
+			cost_usd: sum(requests.costUsd)
 		})
 		.from(requests)
-		.where(sql`${requests.createdAt} >= CURRENT_DATE - INTERVAL '7 days'`);
+		.where(sql`${requests.createdAt} >= CURRENT_DATE - make_interval(days => ${daysToLookBack})`)
+		.groupBy(requests.providerId, requests.modelId);
 
-	const totalCost = Number(recentRow?.total_cost ?? 0);
-	const days = Number(recentRow?.days ?? 0);
+	let totalCost = 0;
+	for (const row of recentRows) {
+		const tokensInput = Number(row.tokens_input ?? 0);
+		const tokensOutput = Number(row.tokens_output ?? 0);
+		const tokensReasoning = Number(row.tokens_reasoning ?? 0);
+		const tokensCacheRead = Number(row.tokens_cache_read ?? 0);
+		const tokensCacheWrite = Number(row.tokens_cache_write ?? 0);
+		const costUsd = Number(row.cost_usd ?? 0);
+		totalCost += resolveCostUsd({
+			costUsd,
+			providerId: row.provider_id,
+			modelId: row.model_id,
+			tokensInput,
+			tokensOutput,
+			tokensReasoning,
+			tokensCacheRead,
+			tokensCacheWrite
+		});
+	}
+
+	const days = recentRows.length > 0 ? daysToLookBack : 0;
+
+	const mtdRows = await db
+		.select({
+			provider_id: requests.providerId,
+			model_id: requests.modelId,
+			tokens_input: sum(requests.tokensInput),
+			tokens_output: sum(requests.tokensOutput),
+			tokens_reasoning: sum(requests.tokensReasoning),
+			tokens_cache_read: sum(requests.tokensCacheRead),
+			tokens_cache_write: sum(requests.tokensCacheWrite),
+			cost_usd: sum(requests.costUsd)
+		})
+		.from(requests)
+		.where(sql`${requests.createdAt} >= DATE_TRUNC('month', CURRENT_DATE)`)
+		.groupBy(requests.providerId, requests.modelId);
+
+	let mtdCost = 0;
+	for (const row of mtdRows) {
+		const tokensInput = Number(row.tokens_input ?? 0);
+		const tokensOutput = Number(row.tokens_output ?? 0);
+		const tokensReasoning = Number(row.tokens_reasoning ?? 0);
+		const tokensCacheRead = Number(row.tokens_cache_read ?? 0);
+		const tokensCacheWrite = Number(row.tokens_cache_write ?? 0);
+		const costUsd = Number(row.cost_usd ?? 0);
+		mtdCost += resolveCostUsd({
+			costUsd,
+			providerId: row.provider_id,
+			modelId: row.model_id,
+			tokensInput,
+			tokensOutput,
+			tokensReasoning,
+			tokensCacheRead,
+			tokensCacheWrite
+		});
+	}
+
+	const mtdDays = mtdRows.length > 0 ? new Date().getDate() : 0;
 
 	const dailyRate = days > 0 ? totalCost / days : 0;
 	const monthlyProjection = dailyRate * 30;
 	const yearlyProjection = dailyRate * 365;
 
+	const today = new Date();
+	const daysRemainingInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate() - today.getDate();
+
 	return {
 		daily_rate: dailyRate,
 		monthly_projection: monthlyProjection,
 		yearly_projection: yearlyProjection,
-		based_on_days: days
+		based_on_days: days,
+		mtd_cost: mtdCost,
+		mtd_days: mtdDays,
+		days_remaining_in_month: daysRemainingInMonth
 	};
 });
 
@@ -945,8 +1086,8 @@ export const getErrorRateByModel = query(async () => {
 });
 
 // Avg tokens per request
-export const getAvgTokensPerRequest = query(async () => {
-	const [row] = await db
+export const getAvgTokensPerRequest = query(v.optional(v.number()), async (days?: number) => {
+	const baseQuery = db
 		.select({
 			request_count: count(),
 			total_input: sum(requests.tokensInput),
@@ -956,6 +1097,13 @@ export const getAvgTokensPerRequest = query(async () => {
 			total_cache_write: sum(requests.tokensCacheWrite)
 		})
 		.from(requests);
+
+	const filteredQuery =
+		days != null
+			? baseQuery.where(sql`${requests.createdAt} >= NOW() - make_interval(days => ${days})`)
+			: baseQuery;
+
+	const [row] = await filteredQuery;
 
 	const requestCount = Number(row?.request_count ?? 0);
 	const totalInput = Number(row?.total_input ?? 0);
@@ -1069,8 +1217,8 @@ export const getFileTypeStatsOverTime = query(async () => {
 });
 
 // Cache Hit Rate - percentage of tokens served from cache
-export const getCacheHitRate = query(async () => {
-	const [row] = await db
+export const getCacheHitRate = query(v.optional(v.number()), async (days?: number) => {
+	const baseQuery = db
 		.select({
 			total_input: sum(requests.tokensInput),
 			total_cache_read: sum(requests.tokensCacheRead),
@@ -1078,17 +1226,20 @@ export const getCacheHitRate = query(async () => {
 		})
 		.from(requests);
 
+	const filteredQuery =
+		days != null
+			? baseQuery.where(sql`${requests.createdAt} >= NOW() - make_interval(days => ${days})`)
+			: baseQuery;
+
+	const [row] = await filteredQuery;
+
 	const tokensInput = Number(row?.total_input ?? 0);
 	const tokensCacheRead = Number(row?.total_cache_read ?? 0);
 	const tokensCacheWrite = Number(row?.total_cache_write ?? 0);
 
-	// Total tokens including cache reads = fresh input + cache reads
-	// Cache hit rate = cache reads / (fresh input + cache reads)
 	const totalWithCache = tokensInput + tokensCacheRead;
 	const hitRate = totalWithCache > 0 ? tokensCacheRead / totalWithCache : 0;
 
-	// Cache efficiency = (cache reads + cache writes) / total tokens
-	// This shows how much of the total token usage was cache-related
 	const totalTokens = totalWithCache + tokensCacheWrite;
 	const cacheEfficiency = totalTokens > 0 ? (tokensCacheRead + tokensCacheWrite) / totalTokens : 0;
 
