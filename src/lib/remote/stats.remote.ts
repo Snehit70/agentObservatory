@@ -1347,7 +1347,8 @@ export const getTimeExplorerData = query(timeRangeSchema, async (range: TimeRang
 				tokens_cache_read: 0,
 				tokens_cache_write: 0
 			};
-			const [year, month, day] = r.week_start.split('-').map(Number);
+			const datePart = r.week_start.split(' ')[0];
+			const [year, month, day] = datePart.split('-').map(Number);
 			const date = new Date(year, month - 1, day);
 			existing.label = `Week of ${date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
 			existing.tokens_input += Number(r.tokens_input ?? 0);
@@ -1399,7 +1400,8 @@ export const getTimeExplorerData = query(timeRangeSchema, async (range: TimeRang
 			tokens_cache_read: 0,
 			tokens_cache_write: 0
 		};
-		const [year, month] = r.month_start.split('-').map(Number);
+		const datePart = r.month_start.split(' ')[0];
+		const [year, month] = datePart.split('-').map(Number);
 		const date = new Date(year, month - 1, 1);
 		existing.label = date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
 		existing.tokens_input += Number(r.tokens_input ?? 0);
