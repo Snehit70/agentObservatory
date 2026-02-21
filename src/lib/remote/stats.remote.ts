@@ -1,8 +1,8 @@
 import { query } from '$app/server';
 import { db } from '$lib/server/db';
 import { resolveCostUsd, normalizeModelId, getModelDisplayName } from '$lib/server/model-pricing';
-import { requests, dailySummary, toolCalls, fileEdits } from '$lib/db/schema';
-import { desc, sql, sum, count, avg, isNotNull, and } from 'drizzle-orm';
+import { requests, dailySummary, toolCalls, fileEdits, turns } from '$lib/db/schema';
+import { desc, sql, sum, count, avg, isNotNull, and, notInArray } from 'drizzle-orm';
 import * as v from 'valibot';
 
 // Totals query - aggregate stats
@@ -1090,5 +1090,85 @@ export const getCacheHitRate = query(async () => {
 		tokens_cache_read: tokensCacheRead,
 		tokens_cache_write: tokensCacheWrite,
 		total_tokens: totalWithCache
+	};
+});
+
+export const getSessionDepthStats = query(async () => {
+	const allTurnsBySession = await db
+		.select({
+			session_id: turns.sessionId,
+			agent: turns.agent,
+			turn_count: count()
+		})
+		.from(turns)
+		.groupBy(turns.sessionId, turns.agent);
+
+	const backgroundAgents = new Set(['explore', 'librarian', 'multimodal-looker', 'sisyphus-junior']);
+	
+	const sessionMap = new Map<string, number>();
+	
+	for (const row of allTurnsBySession) {
+		if (row.agent && backgroundAgents.has(row.agent)) {
+			continue;
+		}
+		const current = sessionMap.get(row.session_id) || 0;
+		sessionMap.set(row.session_id, current + Number(row.turn_count));
+	}
+	
+	const turnCounts = Array.from(sessionMap.values())
+		.filter(count => count > 0)
+		.sort((a, b) => a - b);
+	
+	if (turnCounts.length === 0) {
+		return {
+			total_sessions: 0,
+			total_turns: 0,
+			avg_turns: 0,
+			median_turns: 0,
+			max_turns: 0,
+			min_turns: 0,
+			single_turn_count: 0,
+			single_turn_percent: 0,
+			distribution: []
+		};
+	}
+
+	const totalTurns = turnCounts.reduce((a, b) => a + b, 0);
+	const avgTurns = totalTurns / turnCounts.length;
+	const medianTurns = turnCounts[Math.floor(turnCounts.length / 2)];
+	const maxTurns = turnCounts[turnCounts.length - 1];
+	const minTurns = turnCounts[0];
+	const singleTurnCount = turnCounts.filter(c => c === 1).length;
+
+	const buckets = [
+		{ label: '1', min: 1, max: 1 },
+		{ label: '2-3', min: 2, max: 3 },
+		{ label: '4-5', min: 4, max: 5 },
+		{ label: '6-10', min: 6, max: 10 },
+		{ label: '11-20', min: 11, max: 20 },
+		{ label: '21-30', min: 21, max: 30 },
+		{ label: '31-50', min: 31, max: 50 },
+		{ label: '51+', min: 51, max: Infinity }
+	];
+
+	const distribution = buckets.map(bucket => {
+		const count = turnCounts.filter(c => c >= bucket.min && c <= bucket.max).length;
+		return {
+			label: bucket.label,
+			count,
+			percent: turnCounts.length > 0 ? count / turnCounts.length : 0
+		};
+	});
+
+	return {
+		total_sessions: turnCounts.length,
+		total_turns: totalTurns,
+		avg_turns: Math.round(avgTurns * 10) / 10,
+		median_turns: medianTurns,
+		max_turns: maxTurns,
+		min_turns: minTurns,
+		single_turn_count: singleTurnCount,
+		single_turn_percent: turnCounts.length > 0 ? singleTurnCount / turnCounts.length : 0,
+		distribution
 	};
 });

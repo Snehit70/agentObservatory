@@ -51,9 +51,23 @@ const FALLBACK_COSTS: Record<string, ModelCost> = {
 	'grok-code-fast': { input: 0.2, output: 1.5 },
 	'grok-3': { input: 3, output: 15 },
 	'grok': { input: 0.2, output: 1.5 },
-	// GLM-4.7 (verified Jan 2026 - Z.AI official pricing)
+	// GLM (Zhipu AI / Z.AI) - estimated from official CNY pricing
 	'glm-4.7-free': { input: 0.6, output: 2.2 },
 	'glm-4.7': { input: 0.6, output: 2.2 },
+	'glm-5-free': { input: 0.7, output: 2.8 },
+	'glm-5': { input: 0.7, output: 2.8 },
+	'z-ai/glm-5:free': { input: 0.7, output: 2.8 },
+	'z-ai/glm-4.7:free': { input: 0.6, output: 2.2 },
+	// MiniMax (estimated from official pricing ~5 CNY/M input, ~15 CNY/M output)
+	'minimax-m2.5-free': { input: 0.7, output: 2.1 },
+	'minimax-m2.5': { input: 0.7, output: 2.1 },
+	// Moonshot AI Kimi (estimated from official pricing ~12 CNY/M)
+	'kimi-k2.5-free': { input: 0.84, output: 2.52 },
+	'kimi-k2.5': { input: 0.84, output: 2.52 },
+	'moonshotai/kimi-k2.5:free': { input: 0.84, output: 2.52 },
+	// StepFun Step (estimated from official pricing)
+	'stepfun/step-3.5-flash:free': { input: 0.14, output: 0.56 },
+	'step-3.5-flash': { input: 0.14, output: 0.56 },
 	// Xiaomi MiMo-V2-Flash (verified Jan 2026 - Xiaomi official pricing)
 	'xiaomi/mimo-v2-flash:free': { input: 0.1, output: 0.3 },
 	'mimo-v2-flash': { input: 0.1, output: 0.3 },
@@ -85,6 +99,12 @@ export const normalizeModelId = (modelId: string): string => {
 	if (m.includes('gpt-5.1') || m.includes('gpt-5-1')) return 'gpt-5.1';
 	if (m.includes('gpt-4o')) return 'gpt-4o';
 	if (m.includes('grok')) return 'grok-code';
+	if (m.includes('glm-5')) return 'glm-5';
+	if (m.includes('glm-4.7')) return 'glm-4.7';
+	if (m.includes('minimax-m2.5')) return 'minimax-m2.5';
+	if (m.includes('kimi-k2.5')) return 'kimi-k2.5';
+	if (m.includes('step-3.5-flash')) return 'step-3.5-flash';
+	if (m.includes('mimo-v2-flash') || m.includes('mimo')) return 'mimo-v2-flash';
 
 	return m;
 };
@@ -100,7 +120,13 @@ const MODEL_DISPLAY_NAMES: Record<string, string> = {
 	'gpt-5.2': 'GPT-5.2',
 	'gpt-5.1': 'GPT-5.1',
 	'gpt-4o': 'GPT-4o',
-	'grok-code': 'Grok'
+	'grok-code': 'Grok',
+	'glm-5': 'GLM-5',
+	'glm-4.7': 'GLM-4.7',
+	'minimax-m2.5': 'MiniMax M2.5',
+	'kimi-k2.5': 'Kimi K2.5',
+	'step-3.5-flash': 'Step 3.5 Flash',
+	'mimo-v2-flash': 'MiMo V2 Flash'
 };
 
 export const getModelDisplayName = (modelId: string): string => {
