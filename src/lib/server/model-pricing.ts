@@ -28,6 +28,11 @@ const pricingByProviderModel = Object.entries(modelsDevData).reduce(
 );
 
 const FALLBACK_COSTS: Record<string, ModelCost> = {
+	// Claude 4.6 (verified Mar 2026)
+	'claude-opus-4.6': { input: 5, output: 25, cache_read: 0.5, cache_write: 6.25 },
+	'claude-opus-4-6': { input: 5, output: 25, cache_read: 0.5, cache_write: 6.25 },
+	'claude-sonnet-4.6': { input: 3, output: 15, cache_read: 0.3, cache_write: 3.75 },
+	'claude-sonnet-4-6': { input: 3, output: 15, cache_read: 0.3, cache_write: 3.75 },
 	// Claude 4.5 (verified Jan 2026)
 	'claude-opus-4.5': { input: 5, output: 25, cache_read: 0.5, cache_write: 6.25 },
 	'claude-opus-4-5': { input: 5, output: 25, cache_read: 0.5, cache_write: 6.25 },
@@ -41,10 +46,16 @@ const FALLBACK_COSTS: Record<string, ModelCost> = {
 	// Gemini 2.5 (verified)
 	'gemini-2.5-pro': { input: 1.25, output: 10 },
 	'gemini-2.5-flash': { input: 0.3, output: 2.5 },
-	// OpenAI GPT-5 (verified Jan 2026)
-	'gpt-5': { input: 1.25, output: 10 },
+	// OpenAI GPT-5 (verified Mar 2026)
+	'gpt-5.4': { input: 2.5, output: 15 },
+	'gpt-5.3': { input: 3, output: 15 },
+	'gpt-5.3-codex': { input: 3, output: 15 },
+	'gpt-5.2-codex': { input: 1.75, output: 14 },
 	'gpt-5.2': { input: 1.25, output: 10 },
 	'gpt-5.1': { input: 1.25, output: 10 },
+	'gpt-5': { input: 1.25, output: 10 },
+	'codex-mini': { input: 1.5, output: 6 },
+	'codex-mini-latest': { input: 1.5, output: 6 },
 	'gpt-4o': { input: 2.5, output: 10 },
 	// xAI Grok (verified Jan 2026 - grok-code-fast pricing)
 	'grok-code': { input: 0.2, output: 1.5 },
@@ -88,6 +99,8 @@ export const normalizeModelId = (modelId: string): string => {
 	m = m.replace(/-medium$/, '');
 	m = m.replace(/-low$/, '');
 
+	if (m.includes('claude-opus-4-6') || m.includes('claude-opus-4.6')) return 'claude-opus-4.6';
+	if (m.includes('claude-sonnet-4-6') || m.includes('claude-sonnet-4.6')) return 'claude-sonnet-4.6';
 	if (m.includes('claude-opus-4')) return 'claude-opus-4.5';
 	if (m.includes('claude-sonnet-4')) return 'claude-sonnet-4.5';
 	if (m.includes('claude-haiku-4')) return 'claude-haiku-4.5';
@@ -95,8 +108,13 @@ export const normalizeModelId = (modelId: string): string => {
 	if (m.includes('gemini-3-flash')) return 'gemini-3-flash';
 	if (m.includes('gemini-2.5-pro') || m.includes('gemini-2-5-pro')) return 'gemini-2.5-pro';
 	if (m.includes('gemini-2.5-flash') || m.includes('gemini-2-5-flash')) return 'gemini-2.5-flash';
+	if (m.includes('gpt-5.4') || m.includes('gpt-5-4')) return 'gpt-5.4';
+	if (m.includes('gpt-5.3-codex') || m.includes('gpt-5-3-codex')) return 'gpt-5.3-codex';
+	if (m.includes('gpt-5.3') || m.includes('gpt-5-3')) return 'gpt-5.3';
+	if (m.includes('gpt-5.2-codex') || m.includes('gpt-5-2-codex')) return 'gpt-5.2-codex';
 	if (m.includes('gpt-5.2') || m.includes('gpt-5-2')) return 'gpt-5.2';
 	if (m.includes('gpt-5.1') || m.includes('gpt-5-1')) return 'gpt-5.1';
+	if (m.includes('codex-mini')) return 'codex-mini';
 	if (m.includes('gpt-4o')) return 'gpt-4o';
 	if (m.includes('grok')) return 'grok-code';
 	if (m.includes('glm-5')) return 'glm-5';
@@ -110,6 +128,8 @@ export const normalizeModelId = (modelId: string): string => {
 };
 
 const MODEL_DISPLAY_NAMES: Record<string, string> = {
+	'claude-opus-4.6': 'Claude Opus 4.6',
+	'claude-sonnet-4.6': 'Claude Sonnet 4.6',
 	'claude-opus-4.5': 'Claude Opus 4.5',
 	'claude-sonnet-4.5': 'Claude Sonnet 4.5',
 	'claude-haiku-4.5': 'Claude Haiku 4.5',
@@ -117,8 +137,13 @@ const MODEL_DISPLAY_NAMES: Record<string, string> = {
 	'gemini-3-flash': 'Gemini 3 Flash',
 	'gemini-2.5-pro': 'Gemini 2.5 Pro',
 	'gemini-2.5-flash': 'Gemini 2.5 Flash',
+	'gpt-5.4': 'GPT-5.4',
+	'gpt-5.3': 'GPT-5.3',
+	'gpt-5.3-codex': 'GPT-5.3 Codex',
+	'gpt-5.2-codex': 'GPT-5.2 Codex',
 	'gpt-5.2': 'GPT-5.2',
 	'gpt-5.1': 'GPT-5.1',
+	'codex-mini': 'Codex Mini',
 	'gpt-4o': 'GPT-4o',
 	'grok-code': 'Grok',
 	'glm-5': 'GLM-5',
