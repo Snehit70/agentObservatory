@@ -1744,3 +1744,234 @@ export const getTimeExplorerData = query(timeRangeSchema, async (range: TimeRang
 		.sort((a, b) => a.date.getTime() - b.date.getTime())
 		.map((d) => d.data);
 });
+
+// Agent-level statistics for multi-agent observatory
+export const getAgentSummary = query(v.optional(v.number()), async (days?: number) => {
+	const whereClause =
+		days != null
+			? sql`${requests.createdAt} >= NOW() - make_interval(days => ${days})`
+			: sql`1=1`;
+
+	const rows = await db
+		.select({
+			agent: requests.agent,
+			request_count: count(),
+			tokens_input: sum(requests.tokensInput),
+			tokens_output: sum(requests.tokensOutput),
+			tokens_reasoning: sum(requests.tokensReasoning),
+			tokens_cache_read: sum(requests.tokensCacheRead),
+			cost_usd: sum(requests.costUsd),
+			provider_id: requests.providerId,
+			model_id: requests.modelId
+		})
+		.from(requests)
+		.where(whereClause)
+		.groupBy(requests.agent, requests.providerId, requests.modelId);
+
+	// Aggregate by agent, resolving costs
+	const agentMap = new Map<
+		string,
+		{
+			agent: string;
+			request_count: number;
+			tokens_total: number;
+			cost_usd: number;
+			models: Set<string>;
+		}
+	>();
+
+	for (const row of rows) {
+		const agent = row.agent || 'unknown';
+		const existing = agentMap.get(agent) || {
+			agent,
+			request_count: 0,
+			tokens_total: 0,
+			cost_usd: 0,
+			models: new Set<string>()
+		};
+
+		const tokensInput = Number(row.tokens_input ?? 0);
+		const tokensOutput = Number(row.tokens_output ?? 0);
+		const tokensReasoning = Number(row.tokens_reasoning ?? 0);
+		const tokensCacheRead = Number(row.tokens_cache_read ?? 0);
+
+		existing.request_count += Number(row.request_count ?? 0);
+		existing.tokens_total += tokensInput + tokensOutput + tokensReasoning;
+		existing.cost_usd += resolveCostUsd({
+			costUsd: Number(row.cost_usd ?? 0),
+			providerId: row.provider_id,
+			modelId: row.model_id,
+			tokensInput,
+			tokensOutput,
+			tokensReasoning,
+			tokensCacheRead,
+			tokensCacheWrite: 0
+		});
+		existing.models.add(row.model_id || 'unknown');
+
+		agentMap.set(agent, existing);
+	}
+
+	return Array.from(agentMap.values())
+		.map((a) => ({
+			agent: a.agent,
+			request_count: a.request_count,
+			tokens_total: a.tokens_total,
+			cost_usd: a.cost_usd,
+			model_count: a.models.size
+		}))
+		.sort((a, b) => b.cost_usd - a.cost_usd);
+});
+
+// Get distinct agent types for filter dropdown
+export const getAgentTypes = query(async () => {
+	const rows = await db
+		.select({
+			agent: requests.agent,
+			request_count: count()
+		})
+		.from(requests)
+		.groupBy(requests.agent)
+		.orderBy(desc(count()));
+
+	return rows.map((r) => ({
+		agent: r.agent || 'unknown',
+		request_count: Number(r.request_count ?? 0)
+	}));
+});
+
+// Cost breakdown by agent over time
+export const getCostByAgentOverTime = query(v.optional(v.number()), async (days?: number) => {
+	const effectiveDays = days ?? 30;
+
+	const rows = await db
+		.select({
+			date: sql<string>`DATE(${requests.createdAt})`.as('date'),
+			agent: requests.agent,
+			tokens_input: sum(requests.tokensInput),
+			tokens_output: sum(requests.tokensOutput),
+			tokens_reasoning: sum(requests.tokensReasoning),
+			tokens_cache_read: sum(requests.tokensCacheRead),
+			cost_usd: sum(requests.costUsd),
+			provider_id: requests.providerId,
+			model_id: requests.modelId
+		})
+		.from(requests)
+		.where(sql`${requests.createdAt} >= NOW() - make_interval(days => ${effectiveDays})`)
+		.groupBy(sql`DATE(${requests.createdAt})`, requests.agent, requests.providerId, requests.modelId)
+		.orderBy(sql`DATE(${requests.createdAt})`);
+
+	// Aggregate by date and agent
+	const dateAgentMap = new Map<string, Map<string, number>>();
+
+	for (const row of rows) {
+		const dateKey = row.date;
+		const agent = row.agent || 'unknown';
+
+		if (!dateAgentMap.has(dateKey)) {
+			dateAgentMap.set(dateKey, new Map());
+		}
+
+		const agentCosts = dateAgentMap.get(dateKey)!;
+		const existing = agentCosts.get(agent) || 0;
+
+		const cost = resolveCostUsd({
+			costUsd: Number(row.cost_usd ?? 0),
+			providerId: row.provider_id,
+			modelId: row.model_id,
+			tokensInput: Number(row.tokens_input ?? 0),
+			tokensOutput: Number(row.tokens_output ?? 0),
+			tokensReasoning: Number(row.tokens_reasoning ?? 0),
+			tokensCacheRead: Number(row.tokens_cache_read ?? 0),
+			tokensCacheWrite: 0
+		});
+
+		agentCosts.set(agent, existing + cost);
+	}
+
+	// Convert to array format for charting
+	return Array.from(dateAgentMap.entries())
+		.map(([date, agents]) => ({
+			date,
+			agents: Object.fromEntries(agents)
+		}))
+		.sort((a, b) => a.date.localeCompare(b.date));
+});
+
+// Totals filtered by agent
+export const getTotalsByAgent = query(
+	v.object({
+		agent: v.optional(v.string()),
+		days: v.optional(v.number())
+	}),
+	async ({ agent, days }) => {
+		const conditions = [];
+
+		if (days != null) {
+			conditions.push(sql`${requests.createdAt} >= NOW() - make_interval(days => ${days})`);
+		}
+
+		if (agent) {
+			conditions.push(sql`${requests.agent} = ${agent}`);
+		}
+
+		const whereClause = conditions.length > 0 ? and(...conditions) : sql`1=1`;
+
+		const rows = await db
+			.select({
+				request_count: count(),
+				tokens_input: sum(requests.tokensInput),
+				tokens_output: sum(requests.tokensOutput),
+				tokens_reasoning: sum(requests.tokensReasoning),
+				tokens_cache_read: sum(requests.tokensCacheRead),
+				tokens_cache_write: sum(requests.tokensCacheWrite),
+				cost_usd: sum(requests.costUsd),
+				provider_id: requests.providerId,
+				model_id: requests.modelId
+			})
+			.from(requests)
+			.where(whereClause)
+			.groupBy(requests.modelId, requests.providerId);
+
+		const totals = rows.reduce(
+			(acc, row) => {
+				const tokensInput = Number(row.tokens_input ?? 0);
+				const tokensOutput = Number(row.tokens_output ?? 0);
+				const tokensReasoning = Number(row.tokens_reasoning ?? 0);
+				const tokensCacheRead = Number(row.tokens_cache_read ?? 0);
+				const tokensCacheWrite = Number(row.tokens_cache_write ?? 0);
+				const costUsd = Number(row.cost_usd ?? 0);
+				const resolvedCost = resolveCostUsd({
+					costUsd,
+					providerId: row.provider_id,
+					modelId: row.model_id,
+					tokensInput,
+					tokensOutput,
+					tokensReasoning,
+					tokensCacheRead,
+					tokensCacheWrite
+				});
+				return {
+					total_requests: acc.total_requests + Number(row.request_count ?? 0),
+					total_input: acc.total_input + tokensInput,
+					total_output: acc.total_output + tokensOutput,
+					total_reasoning: acc.total_reasoning + tokensReasoning,
+					total_cache_read: acc.total_cache_read + tokensCacheRead,
+					total_cache_write: acc.total_cache_write + tokensCacheWrite,
+					total_cost: acc.total_cost + resolvedCost
+				};
+			},
+			{
+				total_requests: 0,
+				total_input: 0,
+				total_output: 0,
+				total_reasoning: 0,
+				total_cache_read: 0,
+				total_cache_write: 0,
+				total_cost: 0
+			}
+		);
+
+		return totals;
+	}
+);
