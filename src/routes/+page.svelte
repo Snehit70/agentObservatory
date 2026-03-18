@@ -710,6 +710,10 @@
 		return n.toLocaleString();
 	}
 
+	function formatExactNumber(n: number): string {
+		return Math.round(n).toLocaleString();
+	}
+
 	function formatCost(n: number): string {
 		if (n >= 100) return '$' + n.toFixed(0);
 		if (n >= 1) return '$' + n.toFixed(2);
@@ -733,6 +737,11 @@
 		return ((part / total) * 100).toFixed(1) + '%';
 	}
 
+	function formatSegmentWidth(part: number, total: number): string {
+		if (total <= 0 || part <= 0) return '0%';
+		return `${(part / total) * 100}%`;
+	}
+
 	// Derived data for charts
 	const modelCostLimit = 8;
 	let modelChartData = $derived.by(() => {
@@ -752,6 +761,7 @@
 		return otherValue > 0 ? [...topData, { label: 'other', value: otherValue }] : topData;
 	});
 	let totalPrompt = $derived((totals?.total_input ?? 0) + (totals?.total_cache_read ?? 0));
+	let totalResponse = $derived((totals?.total_output ?? 0) + (totals?.total_reasoning ?? 0));
 	let totalTokens = $derived(
 		(totals?.total_input ?? 0) +
 			(totals?.total_output ?? 0) +
@@ -819,7 +829,7 @@
 			<h1 class="header-title">
 				Agent <span class="accent">Observatory</span>
 			</h1>
-			<div class="header-subtitle">A tiny instrument panel for OpenCode's LLM usage.</div>
+			<div class="header-subtitle">Your agents, under the microscope.</div>
 		</div>
 
 		<div class="header-right">
@@ -879,11 +889,11 @@
 				<div class="hero-value pulse">--</div>
 			</div>
 			<div class="hero-card reveal" style="animation-delay: 140ms;">
-				<div class="hero-label">Input Tokens</div>
+				<div class="hero-label">Prompt Tokens</div>
 				<div class="hero-value white pulse">--</div>
 			</div>
 			<div class="hero-card reveal" style="animation-delay: 170ms;">
-				<div class="hero-label">Output Tokens</div>
+				<div class="hero-label">Response Tokens</div>
 				<div class="hero-value muted pulse">--</div>
 			</div>
 			<div class="hero-card reveal" style="animation-delay: 200ms;">
@@ -903,15 +913,87 @@
 				<div class="hero-value">{formatNumber(totals.total_requests)}</div>
 				<div class="hero-sublabel">{velocity?.requests_per_day ?? 0}/day · {velocity?.requests_per_hour ?? 0}/hr</div>
 			</div>
-			<div class="hero-card reveal" style="animation-delay: 140ms;">
-				<div class="hero-label">Input Tokens</div>
+			<div
+				class="hero-card hero-card-token reveal"
+				style="animation-delay: 140ms;"
+			>
+				<div class="hero-label">Prompt Tokens</div>
 				<div class="hero-value white">{formatNumber(totalPrompt)}</div>
-				<div class="hero-sublabel">Cached <span class="accent">{formatNumber(totals.total_cache_read)}</span> ({formatPercent(totals.total_cache_read, totalPrompt)})</div>
+				<div class="hero-token-default">
+					<div class="hero-sublabel">Fresh + cached context</div>
+				</div>
+				<div class="hero-token-hover">
+					<div class="hero-breakdown-bar" aria-label="Prompt token breakdown">
+						<div
+							class="hero-breakdown-segment hero-breakdown-segment-fresh"
+							style={`width: ${formatSegmentWidth(totals.total_input, totalPrompt)}`}
+						></div>
+						<div
+							class="hero-breakdown-segment hero-breakdown-segment-cached"
+							style={`width: ${formatSegmentWidth(totals.total_cache_read, totalPrompt)}`}
+						></div>
+					</div>
+					<div class="hero-breakdown-list">
+						<div class="hero-breakdown-item">
+							<div class="hero-breakdown-key">
+								<span class="hero-breakdown-dot hero-breakdown-dot-fresh"></span>
+								<span>Fresh</span>
+							</div>
+							<div class="hero-breakdown-value">{formatNumber(totals.total_input)}</div>
+							<div class="hero-breakdown-share">{formatPercent(totals.total_input, totalPrompt)}</div>
+						</div>
+						<div class="hero-breakdown-item">
+							<div class="hero-breakdown-key">
+								<span class="hero-breakdown-dot hero-breakdown-dot-cached"></span>
+								<span>Cached</span>
+							</div>
+							<div class="hero-breakdown-value">{formatNumber(totals.total_cache_read)}</div>
+							<div class="hero-breakdown-share">{formatPercent(totals.total_cache_read, totalPrompt)}</div>
+						</div>
+					</div>
+					<div class="hero-sublabel">Cache write <span class="accent">{formatNumber(totals.total_cache_write)}</span></div>
+				</div>
 			</div>
-			<div class="hero-card reveal" style="animation-delay: 170ms;">
-				<div class="hero-label">Output Tokens</div>
-				<div class="hero-value muted">{formatNumber(totals.total_output)}</div>
-				<div class="hero-sublabel">{tokenEfficiency.toFixed(2)}x efficiency</div>
+			<div
+				class="hero-card hero-card-token reveal"
+				style="animation-delay: 170ms;"
+			>
+				<div class="hero-label">Response Tokens</div>
+				<div class="hero-value muted">{formatNumber(totalResponse)}</div>
+				<div class="hero-token-default">
+					<div class="hero-sublabel">Visible + reasoning output</div>
+				</div>
+				<div class="hero-token-hover">
+					<div class="hero-breakdown-bar" aria-label="Response token breakdown">
+						<div
+							class="hero-breakdown-segment hero-breakdown-segment-output"
+							style={`width: ${formatSegmentWidth(totals.total_output, totalResponse)}`}
+						></div>
+						<div
+							class="hero-breakdown-segment hero-breakdown-segment-reasoning"
+							style={`width: ${formatSegmentWidth(totals.total_reasoning, totalResponse)}`}
+						></div>
+					</div>
+					<div class="hero-breakdown-list">
+						<div class="hero-breakdown-item">
+							<div class="hero-breakdown-key">
+								<span class="hero-breakdown-dot hero-breakdown-dot-output"></span>
+								<span>Visible</span>
+							</div>
+							<div class="hero-breakdown-value">{formatNumber(totals.total_output)}</div>
+							<div class="hero-breakdown-share">{formatPercent(totals.total_output, totalResponse)}</div>
+						</div>
+						<div class="hero-breakdown-item">
+							<div class="hero-breakdown-key">
+								<span class="hero-breakdown-dot hero-breakdown-dot-reasoning"></span>
+								<span>Reasoning</span>
+							</div>
+							<div class="hero-breakdown-value">{formatNumber(totals.total_reasoning)}</div>
+							<div class="hero-breakdown-share">{formatPercent(totals.total_reasoning, totalResponse)}</div>
+						</div>
+					</div>
+					<div class="hero-sublabel">Visible/raw input <span class="accent">{tokenEfficiency.toFixed(2)}x</span></div>
+				</div>
 			</div>
 			<div class="hero-card reveal" style="animation-delay: 200ms;">
 				<div class="hero-label">Request Velocity</div>
