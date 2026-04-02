@@ -32,7 +32,7 @@ import { sql } from "drizzle-orm";
 
 const client = postgres(process.env.DATABASE_URL!);
 const db = drizzle(client, { schema });
-const { requests, dailySummary, sessions, turns } = schema;
+const { requests, dailySummary, sessions, turns, toolCalls, fileEdits, assistantTextParts } = schema;
 
 const CODEX_DIR = join(homedir(), ".codex");
 const SESSIONS_DIR = join(CODEX_DIR, "sessions");
@@ -61,6 +61,13 @@ interface CodexEvent {
     payload: any;
 }
 
+interface ParsedCommand {
+    type?: string;
+    cmd?: string;
+    path?: string | null;
+    name?: string;
+}
+
 interface TokenUsage {
     input_tokens: number;
     cached_input_tokens: number;
@@ -79,6 +86,135 @@ function normalizeCodexModel(model: string): string {
     // Codex model strings are already fairly normalized
     // e.g., "gpt-5.4", "gpt-5.3-codex"
     return model.toLowerCase();
+}
+
+function getTurnMessageId(sessionId: string, timestamp: Date, prefix: string): string {
+    const turn = turnState.get(sessionId);
+    return turn?.turnId || `${prefix}-${sessionId}-${timestamp.getTime()}`;
+}
+
+function inferToolName(payload: any): string {
+    const firstParsed = payload?.parsed_cmd?.[0];
+    if (typeof firstParsed?.type === 'string' && firstParsed.type.length > 0) {
+        return firstParsed.type;
+    }
+    return payload?.type === 'write_stdin' ? 'write_stdin' : 'exec_command';
+}
+
+function inferToolTitle(payload: any): string | null {
+    const firstParsed = payload?.parsed_cmd?.[0];
+    if (typeof firstParsed?.cmd === 'string' && firstParsed.cmd.length > 0) {
+        return firstParsed.cmd.slice(0, 240);
+    }
+    const command = Array.isArray(payload?.command) ? payload.command.join(' ') : '';
+    return command ? command.slice(0, 240) : null;
+}
+
+function durationToMs(duration: any): number | null {
+    if (!duration || typeof duration !== 'object') return null;
+    const secs = typeof duration.secs === 'number' ? duration.secs : 0;
+    const nanos = typeof duration.nanos === 'number' ? duration.nanos : 0;
+    return Math.round(secs * 1000 + nanos / 1_000_000);
+}
+
+function extensionForPath(filePath: string | null | undefined): string | null {
+    if (!filePath) return null;
+    const filename = filePath.split('/').pop() || filePath;
+    const dot = filename.lastIndexOf('.');
+    if (dot <= 0 || dot === filename.length - 1) return null;
+    return filename.slice(dot + 1).toLowerCase();
+}
+
+function normalizeFileOperation(type: string | undefined): 'read' | 'write' | 'edit' | null {
+    if (!type) return null;
+    if (type === 'read') return 'read';
+    if (type === 'write' || type === 'create') return 'write';
+    if (type === 'edit' || type === 'patch') return 'edit';
+    return null;
+}
+
+async function getOpenTurnId(sessionId: string): Promise<number | null> {
+    const [row] = await db.execute(sql`
+        SELECT id
+        FROM turns
+        WHERE session_id = ${sessionId}
+        ORDER BY created_at DESC
+        LIMIT 1
+    `);
+    const id = row && typeof row.id === 'number' ? row.id : Number(row?.id);
+    return Number.isFinite(id) ? id : null;
+}
+
+async function notifyLiveRef(type: string, id: string, sessionId: string): Promise<void> {
+    await client.notify('live_event', JSON.stringify({ type, id, sessionId }));
+}
+
+async function notifyLiveFull(event: Record<string, unknown>): Promise<void> {
+    await client.notify('live_event', JSON.stringify(event));
+}
+
+async function insertFileEditsFromParsedCommand(
+    sessionId: string,
+    callId: string,
+    parsed: ParsedCommand[] | undefined,
+    timestamp: Date
+): Promise<void> {
+    if (!Array.isArray(parsed) || parsed.length === 0) return;
+
+    const turnId = await getOpenTurnId(sessionId);
+    const [toolRow] = await db.execute(sql`
+        SELECT id
+        FROM tool_calls
+        WHERE call_id = ${callId}
+        LIMIT 1
+    `);
+    const toolCallId = toolRow && typeof toolRow.id === 'number' ? toolRow.id : Number(toolRow?.id);
+    const normalizedToolCallId = Number.isFinite(toolCallId) ? toolCallId : null;
+
+    for (const item of parsed) {
+        const operation = normalizeFileOperation(item?.type);
+        const filePath = typeof item?.path === 'string' ? item.path : null;
+        if (!operation || !filePath) continue;
+
+        const existing = await db.execute(sql`
+            SELECT id
+            FROM file_edits
+            WHERE session_id = ${sessionId}
+              AND file_path = ${filePath}
+              AND operation = ${operation}
+              AND created_at = ${timestamp}
+              AND (
+                (${normalizedToolCallId} IS NULL AND tool_call_id IS NULL)
+                OR tool_call_id = ${normalizedToolCallId}
+              )
+            LIMIT 1
+        `);
+        if (existing.length > 0) continue;
+
+        await db.insert(fileEdits).values({
+            sessionId,
+            turnId,
+            toolCallId: normalizedToolCallId,
+            filePath,
+            fileExtension: extensionForPath(filePath),
+            operation,
+            linesAdded: 0,
+            linesRemoved: 0,
+            createdAt: timestamp
+        });
+
+        await notifyLiveFull({
+            type: 'file.edit',
+            sessionId,
+            toolCallId: callId,
+            filePath,
+            fileExtension: extensionForPath(filePath),
+            operation,
+            linesAdded: 0,
+            linesRemoved: 0,
+            createdAt: timestamp.toISOString()
+        });
+    }
 }
 
 async function processSessionFile(filePath: string): Promise<void> {
@@ -265,8 +401,7 @@ async function processEvent(
     if (event.type === 'event_msg' && event.payload?.type === 'user_message') {
         const prompt = event.payload.message;
         if (prompt && prompt.trim()) {
-            const turn = turnState.get(sessionId);
-            const messageId = turn?.turnId || `codex-prompt-${timestamp.getTime()}`;
+            const messageId = getTurnMessageId(sessionId, timestamp, 'codex-prompt');
 
             try {
                 await db.insert(turns).values({
@@ -285,6 +420,17 @@ async function processEvent(
                     .set({ title: derivedTitle })
                     .where(sql`session_id = ${sessionId} AND title IS NULL`);
 
+                await notifyLiveFull({
+                    type: 'prompt',
+                    sessionId,
+                    messageId,
+                    prompt: prompt.slice(0, 10000),
+                    agent: 'codex',
+                    providerId: meta.modelProvider,
+                    modelId: normalizeCodexModel(meta.model),
+                    createdAt: timestamp.toISOString()
+                });
+
             } catch (e: any) {
                 const pgError = e.cause || e;
                 if (pgError.code !== '23505') {
@@ -302,6 +448,138 @@ async function processEvent(
                 .where(sql`session_id = ${sessionId}`);
         } catch (e) {
             // Ignore
+        }
+    }
+
+    if (event.type === 'event_msg' && event.payload?.type === 'agent_message') {
+        const text = typeof event.payload.message === 'string' ? event.payload.message : null;
+        if (!text || !text.trim()) return;
+
+        const turnMessageId = getTurnMessageId(sessionId, timestamp, 'codex-assistant');
+        const messageId = `${turnMessageId}:assistant`;
+        const partId = event.payload.id || timestamp.toISOString();
+
+        try {
+            await db
+                .insert(assistantTextParts)
+                .values({
+                    sessionId,
+                    messageId,
+                    partId,
+                    text,
+                    createdAt: timestamp
+                })
+                .onConflictDoNothing();
+
+            await db
+                .update(turns)
+                .set({
+                    assistantMessageId: messageId,
+                    assistantText: text,
+                    completedAt: timestamp
+                })
+                .where(sql`session_id = ${sessionId} AND user_message_id = ${turnMessageId}`);
+
+            await notifyLiveFull({
+                type: 'assistant.text',
+                sessionId,
+                messageId,
+                partId,
+                text,
+                createdAt: timestamp.toISOString()
+            });
+        } catch (e) {
+            // Ignore duplicate or partial assistant updates
+        }
+    }
+
+    if (event.type === 'event_msg' && event.payload?.type === 'exec_command_start') {
+        const callId = event.payload.call_id || `codex-call-${timestamp.getTime()}`;
+        const turnId = await getOpenTurnId(sessionId);
+
+        try {
+            await db
+                .insert(toolCalls)
+                .values({
+                    sessionId,
+                    turnId,
+                    callId,
+                    tool: inferToolName(event.payload),
+                    args: {
+                        command: event.payload.command,
+                        parsed_cmd: event.payload.parsed_cmd,
+                        cwd: event.payload.cwd
+                    },
+                    startedAt: timestamp
+                })
+                .onConflictDoNothing();
+
+            await notifyLiveRef('tool.before', callId, sessionId);
+        } catch (e) {
+            // Ignore duplicate tool start events
+        }
+    }
+
+    if (event.type === 'event_msg' && event.payload?.type === 'exec_command_end') {
+        const callId = event.payload.call_id || `codex-call-${timestamp.getTime()}`;
+        const turnId = await getOpenTurnId(sessionId);
+
+        try {
+            await db
+                .insert(toolCalls)
+                .values({
+                    sessionId,
+                    turnId,
+                    callId,
+                    tool: inferToolName(event.payload),
+                    args: {
+                        command: event.payload.command,
+                        parsed_cmd: event.payload.parsed_cmd,
+                        cwd: event.payload.cwd
+                    },
+                    title: inferToolTitle(event.payload),
+                    output: event.payload.aggregated_output || event.payload.stdout || '',
+                    metadata: {
+                        process_id: event.payload.process_id,
+                        exit_code: event.payload.exit_code,
+                        source: event.payload.source,
+                        parsed_cmd: event.payload.parsed_cmd
+                    },
+                    durationMs: durationToMs(event.payload.duration),
+                    success: event.payload.exit_code === 0,
+                    errorMessage: event.payload.stderr || null,
+                    startedAt: timestamp,
+                    completedAt: timestamp
+                })
+                .onConflictDoUpdate({
+                    target: toolCalls.callId,
+                    set: {
+                        turnId,
+                        tool: inferToolName(event.payload),
+                        title: inferToolTitle(event.payload),
+                        output: event.payload.aggregated_output || event.payload.stdout || '',
+                        metadata: {
+                            process_id: event.payload.process_id,
+                            exit_code: event.payload.exit_code,
+                            source: event.payload.source,
+                            parsed_cmd: event.payload.parsed_cmd
+                        },
+                        durationMs: durationToMs(event.payload.duration),
+                        success: event.payload.exit_code === 0,
+                        errorMessage: event.payload.stderr || null,
+                        completedAt: timestamp
+                    }
+                });
+
+            await insertFileEditsFromParsedCommand(
+                sessionId,
+                callId,
+                event.payload.parsed_cmd,
+                timestamp
+            );
+            await notifyLiveRef('tool.after', callId, sessionId);
+        } catch (e) {
+            // Ignore duplicate tool completion events
         }
     }
 }
@@ -330,29 +608,23 @@ async function findSessionFiles(dir: string): Promise<string[]> {
     return files;
 }
 
-async function initialSync(): Promise<void> {
-    console.log(`[Codex] Initial sync from ${SESSIONS_DIR}`);
-    
+async function seedExistingFiles(): Promise<void> {
+    console.log(`[Codex] Seeding existing session files from ${SESSIONS_DIR}`);
+
     const files = await findSessionFiles(SESSIONS_DIR);
-    console.log(`[Codex] Found ${files.length} session files`);
-    
-    // Sort by modification time, newest first
-    const filesWithStats = await Promise.all(
-        files.map(async (f) => {
-            const s = await stat(f);
-            return { path: f, mtime: s.mtime };
-        })
-    );
-    filesWithStats.sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
-    
-    // Process last 20 sessions for initial sync
-    const recentFiles = filesWithStats.slice(0, 20);
-    
-    for (const { path } of recentFiles) {
-        await processSessionFile(path);
+    console.log(`[Codex] Found ${files.length} existing session files`);
+
+    for (const filePath of files) {
+        try {
+            const content = await readFile(filePath, 'utf-8');
+            const lineCount = content.split('\n').length;
+            fileProgress.set(filePath, lineCount);
+        } catch {
+            // Ignore files that disappear while seeding
+        }
     }
-    
-    console.log(`[Codex] Initial sync complete`);
+
+    console.log(`[Codex] Existing files seeded; only new live events will be processed`);
 }
 
 function watchDirectory(dir: string, depth: number = 0): void {
@@ -404,8 +676,8 @@ async function main(): Promise<void> {
 ╚═══════════════════════════════════════════════════════════╝
 `);
 
-    // Initial sync of recent sessions
-    await initialSync();
+    // Match the OpenCode watcher: ignore old history and stream only new activity.
+    await seedExistingFiles();
     
     // Watch for new session files
     console.log(`[Codex] Watching for new sessions...`);
@@ -428,12 +700,10 @@ async function main(): Promise<void> {
     // Periodic re-scan every 5 minutes
     setInterval(async () => {
         const files = await findSessionFiles(SESSIONS_DIR);
-        // Re-process files that may have been appended to
+        // Re-process only files we've already seen if they were appended to.
         for (const f of files.slice(0, 10)) {
             const currentSize = fileProgress.get(f) || 0;
             try {
-                const s = await stat(f);
-                // If file grew, reprocess it
                 const content = await readFile(f, 'utf-8');
                 const lineCount = content.split('\n').length;
                 if (lineCount > currentSize) {
