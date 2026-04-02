@@ -19,7 +19,8 @@
 		"format": "prettier --write .",
 		"lint": "prettier --check .",
 		"sync:codex": "bun run scripts/codex-sync.ts",
-		"sync:opencode": "bun run scripts/watch-logs.ts"
+		"sync:opencode": "bun run scripts/watch-logs.ts",
+		"sync:claude": "bun run scripts/claude-sync.ts"
 	},
 	"devDependencies": {
 		"@sveltejs/adapter-auto": "^7.0.0",
