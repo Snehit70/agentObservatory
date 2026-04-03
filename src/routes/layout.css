@@ -602,6 +602,23 @@ tbody tr:hover {
 	}
 }
 
+/* Chart legend (multi-series) */
+.chart-legend {
+	display: flex;
+	gap: 1rem;
+	margin-bottom: 0.625rem;
+	flex-wrap: wrap;
+}
+
+.legend-item {
+	display: inline-flex;
+	align-items: center;
+	font-size: 0.65rem;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: var(--color-text-tertiary);
+}
+
 /* Chart header */
 .chart-header {
 	display: flex;
