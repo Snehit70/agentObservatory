@@ -17,7 +17,8 @@
 	}
 
 	type DataPoint = {
-		date: string;
+		label: string;
+		title?: string;
 		avg_ms: number;
 		p50_ms: number;
 		p95_ms: number;
@@ -77,7 +78,7 @@
 			.attr('transform', `translate(${margin.left},${margin.top})`);
 
 		const x = d3.scalePoint<string>()
-			.domain(data.map((d) => d.date))
+			.domain(data.map((d) => d.label))
 			.range([0, innerWidth]);
 
 		const maxVal = d3.max(data, (d) => Math.max(d.avg_ms, d.p50_ms, d.p95_ms)) || 0;
@@ -112,7 +113,7 @@
 
 		// X axis labels
 		const tickInterval = Math.max(1, Math.ceil(data.length / 7));
-		const tickValues = data.filter((_, i) => i % tickInterval === 0).map((d) => d.date);
+		const tickValues = data.filter((_, i) => i % tickInterval === 0).map((d) => d.label);
 
 		g.append('g')
 			.attr('class', 'axis')
@@ -120,11 +121,6 @@
 			.call(
 				d3.axisBottom(x)
 					.tickValues(tickValues)
-					.tickFormat((d: string) => {
-						const [year, month, day] = d.split('-').map(Number);
-						return new Date(year, month - 1, day)
-							.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-					})
 			)
 			.selectAll('text')
 			.attr('fill', 'rgba(255, 255, 255, 0.50)')
@@ -146,7 +142,7 @@
 
 			const lineFn = d3
 				.line<DataPoint>()
-				.x((d) => x(d.date) ?? 0)
+				.x((d) => x(d.label) ?? 0)
 				.y((d) => y(d[s.key]))
 				.curve(d3.curveMonotoneX);
 
@@ -184,7 +180,7 @@
 				.enter()
 				.append('circle')
 				.attr('class', `dot dot-${s.key}`)
-				.attr('cx', (d) => x(d.date) ?? 0)
+				.attr('cx', (d) => x(d.label) ?? 0)
 				.attr('cy', (d) => y(d[s.key]))
 				.attr('r', 0)
 				.attr('fill', color)
@@ -241,7 +237,7 @@
 			})
 			.on('pointermove', (event) => {
 				const [mx] = d3.pointer(event, g.node() as SVGGElement);
-				const positions = data.map((d) => ({ d, x: x(d.date) ?? 0 }));
+				const positions = data.map((d) => ({ d, x: x(d.label) ?? 0 }));
 				let closest = positions[0];
 				let minDist = Math.abs(mx - closest.x);
 				for (const p of positions) {
@@ -264,14 +260,10 @@
 				});
 
 				const [px, py] = d3.pointer(event, containerEl);
-				const [year, month, day] = d.date.split('-').map(Number);
-				const dateLabel = new Date(year, month - 1, day)
-					.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-
 				tooltip = {
 					x: clamp(px + 12, 8, actualWidth - 180),
 					y: clamp(py - 12, 8, height - 100),
-					title: dateLabel,
+					title: d.title ?? d.label,
 					lines: series.map((s) => ({
 						label: s.label,
 						value: yFormatter(d[s.key]),
