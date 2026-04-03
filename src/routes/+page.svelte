@@ -27,9 +27,11 @@
 		getCacheHitRate,
 		getToolStats,
 		getBashCommandBreakdown,
-		getSessionDepthStats
+		getSessionDepthStats,
+		getLatencyOverTime
 	} from '$lib/remote/stats.remote';
 	import FileTypeChart from '$lib/components/FileTypeChart.svelte';
+	import MultiLineChart from '$lib/components/MultiLineChart.svelte';
 
 	// Types for our data
 	type Totals = {
@@ -141,6 +143,7 @@
 	};
 	type LatencyStats = {
 		avg_ms: number;
+		p50_ms: number;
 		p95_ms: number;
 		total: number;
 	};
@@ -235,10 +238,12 @@
 	let toolStats = $state<ToolStatsItem[] | null>(null);
 	let bashBreakdown = $state<BashCommandBreakdown[] | null>(null);
 	let sessionDepthStats = $state<SessionDepthStats | null>(null);
+	let latencyOverTimeData = $state<{ date: string; avg_ms: number; p50_ms: number; p95_ms: number }[] | null>(null);
 	let costByModelRange = $state<TimeRange>('all');
 	let modelPerformanceRange = $state<TimeRange>('all');
 	let costMetricsRange = $state<TimeRange>('all');
 	let performanceMetricsRange = $state<TimeRange>('all');
+	let latencyRange = $state<TimeRange>('month');
 
 	// Loading states
 	let totalsLoading = $state(true);
@@ -252,6 +257,7 @@
 	let toolSuccessSummaryLoading = $state(true);
 	let peakDaysLoading = $state(true);
 	let latencyStatsLoading = $state(true);
+	let latencyOverTimeLoading = $state(true);
 	let costTrendLoading = $state(true);
 	let sessionStatsLoading = $state(true);
 	let modelDiversityLoading = $state(true);
@@ -277,6 +283,7 @@
 	let toolSuccessSummaryError = $state<Error | null>(null);
 	let peakDaysError = $state<Error | null>(null);
 	let latencyStatsError = $state<Error | null>(null);
+	let latencyOverTimeError = $state<Error | null>(null);
 	let costTrendError = $state<Error | null>(null);
 	let sessionStatsError = $state<Error | null>(null);
 	let modelDiversityError = $state<Error | null>(null);
@@ -478,6 +485,19 @@
 		}
 	}
 
+	async function fetchLatencyOverTime() {
+		latencyOverTimeLoading = true;
+		latencyOverTimeError = null;
+		try {
+			const days = latencyRange === 'day' ? 1 : latencyRange === 'week' ? 7 : latencyRange === 'month' ? 30 : undefined;
+			latencyOverTimeData = await getLatencyOverTime(days);
+		} catch (e) {
+			latencyOverTimeError = e instanceof Error ? e : new Error('Failed to load');
+		} finally {
+			latencyOverTimeLoading = false;
+		}
+	}
+
 	async function fetchCostTrend() {
 		costTrendLoading = true;
 		costTrendError = null;
@@ -651,6 +671,7 @@
 		fetchToolSuccessSummary();
 		fetchPeakDays();
 		fetchLatencyStats();
+		fetchLatencyOverTime();
 		fetchCostTrend();
 		fetchSessionStats();
 		fetchModelDiversity();
@@ -692,6 +713,11 @@
 		fetchToolSuccessSummary();
 		fetchAvgTokensPerRequest();
 		fetchCacheHitRate();
+	});
+
+	$effect(() => {
+		latencyRange;
+		fetchLatencyOverTime();
 	});
 
 	$effect(() => {
@@ -1053,6 +1079,28 @@
 				<div class="text-tertiary text-sm py-8 text-center">No data available</div>
 			{/if}
 		</div>
+
+		<div class="panel reveal" style="animation-delay: 270ms;">
+			<div class="section-header">
+				<h2 class="section-title">Latency Distribution</h2>
+				<div class="range-buttons">
+					{#each ['all', 'day', 'week', 'month'] as r}
+						<button type="button" class="range-btn {latencyRange === (r as TimeRange) ? 'active' : ''}" onclick={() => (latencyRange = r as TimeRange)}>
+							{r.toUpperCase()}
+						</button>
+					{/each}
+				</div>
+			</div>
+			{#if latencyOverTimeLoading}
+				{@render loadingState()}
+			{:else if latencyOverTimeError}
+				{@render errorState(latencyOverTimeError, fetchLatencyOverTime)}
+			{:else if latencyOverTimeData && latencyOverTimeData.length > 0}
+				<MultiLineChart data={latencyOverTimeData} height={220} />
+			{:else}
+				<div class="text-tertiary text-sm py-8 text-center">No latency data available</div>
+			{/if}
+		</div>
 	</section>
 
 	<!-- TIER 3: COST METRICS -->
@@ -1111,7 +1159,7 @@
 			<div class="stat-label">Latency P95</div>
 			{#if latencyStatsLoading}<div class="stat-value pulse">--</div>
 			{:else}<div class="stat-value">{formatDuration(latencyStats?.p95_ms ?? 0)}</div>{/if}
-			<div class="stat-sublabel">avg {formatDuration(latencyStats?.avg_ms ?? 0)} · {performanceMetricsRange === 'all' ? 'all time' : 'last ' + performanceMetricsRange}</div>
+			<div class="stat-sublabel">P50 {formatDuration(latencyStats?.p50_ms ?? 0)} · avg {formatDuration(latencyStats?.avg_ms ?? 0)}</div>
 		</div>
 		<div class="stat-card reveal" style="animation-delay: 350ms;">
 			<div class="stat-label">Tool Success</div>
@@ -1159,12 +1207,6 @@
 			{#if sessionStatsLoading}<div class="stat-value pulse">--</div>
 			{:else}<div class="stat-value">{formatSessionDuration(sessionStats?.avg_duration_ms ?? 0)}</div>{/if}
 			<div class="stat-sublabel">{sessionStats?.total_sessions ?? 0} total sessions</div>
-		</div>
-		<div class="stat-card reveal" style="animation-delay: 500ms;">
-			<div class="stat-label">Longest Session</div>
-			{#if sessionStatsLoading}<div class="stat-value pulse">--</div>
-			{:else}<div class="stat-value">{formatSessionDuration(sessionStats?.longest_duration_ms ?? 0)}</div>{/if}
-			<div class="stat-sublabel">—</div>
 		</div>
 	</section>
 
