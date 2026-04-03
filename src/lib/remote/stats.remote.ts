@@ -81,6 +81,7 @@ export const getLatencyStats = query(v.optional(v.number()), async (days?: numbe
 	const [row] = await db
 		.select({
 			avg_ms: avg(requests.durationMs),
+			p50_ms: sql<number>`percentile_cont(0.50) WITHIN GROUP (ORDER BY ${requests.durationMs})`,
 			p95_ms: sql<number>`percentile_cont(0.95) WITHIN GROUP (ORDER BY ${requests.durationMs})`,
 			total: count()
 		})
@@ -89,6 +90,7 @@ export const getLatencyStats = query(v.optional(v.number()), async (days?: numbe
 
 	return {
 		avg_ms: Number(row?.avg_ms ?? 0),
+		p50_ms: Number(row?.p50_ms ?? 0),
 		p95_ms: Number(row?.p95_ms ?? 0),
 		total: Number(row?.total ?? 0)
 	};
@@ -1331,6 +1333,36 @@ export const getSessionDepthStats = query(async () => {
 		single_turn_percent: turnCounts.length > 0 ? singleTurnCount / turnCounts.length : 0,
 		distribution
 	};
+});
+
+// Latency over time - P50, P95, avg per day
+export const getLatencyOverTime = query(v.optional(v.number()), async (days?: number) => {
+	const conditions: any[] = [isNotNull(requests.durationMs)];
+
+	if (days != null) {
+		conditions.push(sql`${requests.createdAt} >= NOW() - make_interval(days => ${days})`);
+	}
+
+	const rows = await db
+		.select({
+			date: sql<string>`DATE(${requests.createdAt})::text`,
+			avg_ms: avg(requests.durationMs),
+			p50_ms: sql<number>`percentile_cont(0.50) WITHIN GROUP (ORDER BY ${requests.durationMs})`,
+			p95_ms: sql<number>`percentile_cont(0.95) WITHIN GROUP (ORDER BY ${requests.durationMs})`,
+			total: count()
+		})
+		.from(requests)
+		.where(and(...conditions))
+		.groupBy(sql`DATE(${requests.createdAt})`)
+		.orderBy(sql`DATE(${requests.createdAt})`);
+
+	return rows.map((r) => ({
+		date: r.date,
+		avg_ms: Number(r.avg_ms ?? 0),
+		p50_ms: Number(r.p50_ms ?? 0),
+		p95_ms: Number(r.p95_ms ?? 0),
+		total: Number(r.total ?? 0)
+	}));
 });
 
 type TimeRange = 'day' | 'week' | 'month' | 'all';
