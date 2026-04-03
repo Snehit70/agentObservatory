@@ -1336,33 +1336,136 @@ export const getSessionDepthStats = query(async () => {
 });
 
 // Latency over time - P50, P95, avg per day
-export const getLatencyOverTime = query(v.optional(v.number()), async (days?: number) => {
-	const conditions: any[] = [isNotNull(requests.durationMs)];
+export const getLatencyOverTime = query(
+	v.union([v.literal('day'), v.literal('week'), v.literal('month'), v.literal('all')]),
+	async (range: TimeRange) => {
+	if (range === 'day') {
+		const rows = await db
+			.select({
+				hour: sql<number>`EXTRACT(HOUR FROM ${requests.createdAt} AT TIME ZONE 'Asia/Kolkata')::int`,
+				avg_ms: avg(requests.durationMs),
+				p50_ms: sql<number>`percentile_cont(0.50) WITHIN GROUP (ORDER BY ${requests.durationMs})`,
+				p95_ms: sql<number>`percentile_cont(0.95) WITHIN GROUP (ORDER BY ${requests.durationMs})`
+			})
+			.from(requests)
+			.where(
+				and(
+					isNotNull(requests.durationMs),
+					sql`${requests.createdAt} >= NOW() - INTERVAL '24 hours'`
+				)
+			)
+			.groupBy(sql`EXTRACT(HOUR FROM ${requests.createdAt} AT TIME ZONE 'Asia/Kolkata')`);
 
-	if (days != null) {
-		conditions.push(sql`${requests.createdAt} >= NOW() - make_interval(days => ${days})`);
+		const hourMap = new Map<number, { label: string; title: string; avg_ms: number; p50_ms: number; p95_ms: number }>();
+		for (const r of rows) {
+			const h = Number(r.hour);
+			hourMap.set(h, {
+				label: `${String(h).padStart(2, '0')}:00`,
+				title: `${String(h).padStart(2, '0')}:00`,
+				avg_ms: Number(r.avg_ms ?? 0),
+				p50_ms: Number(r.p50_ms ?? 0),
+				p95_ms: Number(r.p95_ms ?? 0)
+			});
+		}
+
+		const currentHour = new Date().getHours();
+		return Array.from({ length: 24 }, (_, i) => {
+			const h = (currentHour - 23 + i + 24) % 24;
+			return hourMap.get(h) ?? {
+				label: `${String(h).padStart(2, '0')}:00`,
+				title: `${String(h).padStart(2, '0')}:00`,
+				avg_ms: 0,
+				p50_ms: 0,
+				p95_ms: 0
+			};
+		});
+	}
+
+	if (range === 'week') {
+		const rows = await db
+			.select({
+				date: sql<string>`DATE(${requests.createdAt})::text`,
+				avg_ms: avg(requests.durationMs),
+				p50_ms: sql<number>`percentile_cont(0.50) WITHIN GROUP (ORDER BY ${requests.durationMs})`,
+				p95_ms: sql<number>`percentile_cont(0.95) WITHIN GROUP (ORDER BY ${requests.durationMs})`
+			})
+			.from(requests)
+			.where(
+				and(
+					isNotNull(requests.durationMs),
+					sql`${requests.createdAt} >= NOW() - INTERVAL '7 days'`
+				)
+			)
+			.groupBy(sql`DATE(${requests.createdAt})`)
+			.orderBy(sql`DATE(${requests.createdAt})`);
+
+		return rows.map((r) => {
+			const [year, month, day] = r.date.split('-').map(Number);
+			const date = new Date(year, month - 1, day);
+			return {
+				label: date.toLocaleDateString('en-US', { weekday: 'short' }),
+				title: date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }),
+				avg_ms: Number(r.avg_ms ?? 0),
+				p50_ms: Number(r.p50_ms ?? 0),
+				p95_ms: Number(r.p95_ms ?? 0)
+			};
+		});
+	}
+
+	if (range === 'month') {
+		const rows = await db
+			.select({
+				bucket: sql<string>`DATE_TRUNC('week', ${requests.createdAt})::date::text`,
+				avg_ms: avg(requests.durationMs),
+				p50_ms: sql<number>`percentile_cont(0.50) WITHIN GROUP (ORDER BY ${requests.durationMs})`,
+				p95_ms: sql<number>`percentile_cont(0.95) WITHIN GROUP (ORDER BY ${requests.durationMs})`
+			})
+			.from(requests)
+			.where(
+				and(
+					isNotNull(requests.durationMs),
+					sql`${requests.createdAt} >= NOW() - INTERVAL '28 days'`
+				)
+			)
+			.groupBy(sql`DATE_TRUNC('week', ${requests.createdAt})::date`)
+			.orderBy(sql`DATE_TRUNC('week', ${requests.createdAt})::date`);
+
+		return rows.map((r) => {
+			const [year, month, day] = r.bucket.split('-').map(Number);
+			const date = new Date(year, month - 1, day);
+			return {
+				label: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+				title: `Week of ${date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`,
+				avg_ms: Number(r.avg_ms ?? 0),
+				p50_ms: Number(r.p50_ms ?? 0),
+				p95_ms: Number(r.p95_ms ?? 0)
+			};
+		});
 	}
 
 	const rows = await db
 		.select({
-			date: sql<string>`DATE(${requests.createdAt})::text`,
+			bucket: sql<string>`DATE_TRUNC('month', ${requests.createdAt})::date::text`,
 			avg_ms: avg(requests.durationMs),
 			p50_ms: sql<number>`percentile_cont(0.50) WITHIN GROUP (ORDER BY ${requests.durationMs})`,
-			p95_ms: sql<number>`percentile_cont(0.95) WITHIN GROUP (ORDER BY ${requests.durationMs})`,
-			total: count()
+			p95_ms: sql<number>`percentile_cont(0.95) WITHIN GROUP (ORDER BY ${requests.durationMs})`
 		})
 		.from(requests)
-		.where(and(...conditions))
-		.groupBy(sql`DATE(${requests.createdAt})`)
-		.orderBy(sql`DATE(${requests.createdAt})`);
+		.where(isNotNull(requests.durationMs))
+		.groupBy(sql`DATE_TRUNC('month', ${requests.createdAt})::date`)
+		.orderBy(sql`DATE_TRUNC('month', ${requests.createdAt})::date`);
 
-	return rows.map((r) => ({
-		date: r.date,
-		avg_ms: Number(r.avg_ms ?? 0),
-		p50_ms: Number(r.p50_ms ?? 0),
-		p95_ms: Number(r.p95_ms ?? 0),
-		total: Number(r.total ?? 0)
-	}));
+	return rows.map((r) => {
+		const [year, month] = r.bucket.split('-').map(Number);
+		const date = new Date(year, month - 1, 1);
+		return {
+			label: date.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }),
+			title: date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+			avg_ms: Number(r.avg_ms ?? 0),
+			p50_ms: Number(r.p50_ms ?? 0),
+			p95_ms: Number(r.p95_ms ?? 0)
+		};
+	});
 });
 
 type TimeRange = 'day' | 'week' | 'month' | 'all';

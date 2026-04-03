@@ -238,7 +238,13 @@
 	let toolStats = $state<ToolStatsItem[] | null>(null);
 	let bashBreakdown = $state<BashCommandBreakdown[] | null>(null);
 	let sessionDepthStats = $state<SessionDepthStats | null>(null);
-	let latencyOverTimeData = $state<{ date: string; avg_ms: number; p50_ms: number; p95_ms: number }[] | null>(null);
+	let latencyOverTimeData = $state<{
+		label: string;
+		title?: string;
+		avg_ms: number;
+		p50_ms: number;
+		p95_ms: number;
+	}[] | null>(null);
 	let costByModelRange = $state<TimeRange>('all');
 	let modelPerformanceRange = $state<TimeRange>('all');
 	let costMetricsRange = $state<TimeRange>('all');
@@ -489,8 +495,7 @@
 		latencyOverTimeLoading = true;
 		latencyOverTimeError = null;
 		try {
-			const days = latencyRange === 'day' ? 1 : latencyRange === 'week' ? 7 : latencyRange === 'month' ? 30 : undefined;
-			latencyOverTimeData = await getLatencyOverTime(days);
+			latencyOverTimeData = await getLatencyOverTime(latencyRange);
 		} catch (e) {
 			latencyOverTimeError = e instanceof Error ? e : new Error('Failed to load');
 		} finally {
