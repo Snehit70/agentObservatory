@@ -1085,7 +1085,7 @@ export const getErrorRateByModel = query(async () => {
 			failed_tool_calls: failedCalls,
 			error_rate: totalCalls > 0 ? failedCalls / totalCalls : 0
 		};
-	}).filter(m => m.total_tool_calls >= 100);
+	}).filter(m => m.total_tool_calls >= 385); // n≥385 for ±5% margin at 95% CI
 });
 
 // Avg tokens per request
