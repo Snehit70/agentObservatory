@@ -8,7 +8,7 @@ import {
     toolCalls, 
     fileEdits 
 } from '$lib/db/schema';
-import { sql, eq, isNull, and } from 'drizzle-orm';
+import { sql, eq, isNull, and, desc } from 'drizzle-orm';
 
 import type { RequestHandler } from './$types';
 
@@ -121,8 +121,16 @@ export const POST: RequestHandler = async ({ request }) => {
         }
 
         else if (type === 'tool.before') {
+            const openTurn = await db
+                .select({ id: turns.id })
+                .from(turns)
+                .where(and(eq(turns.sessionId, event.sessionId), isNull(turns.assistantMessageId)))
+                .orderBy(desc(turns.createdAt))
+                .limit(1);
+
             await db.insert(toolCalls).values({
                 sessionId: event.sessionId,
+                turnId: openTurn[0]?.id ?? null,
                 callId: event.callId,
                 tool: event.tool,
                 args: event.args, 
@@ -147,8 +155,16 @@ export const POST: RequestHandler = async ({ request }) => {
         }
 
         else if (type === 'file.edit') {
+            const openTurn = await db
+                .select({ id: turns.id })
+                .from(turns)
+                .where(and(eq(turns.sessionId, event.sessionId), isNull(turns.assistantMessageId)))
+                .orderBy(desc(turns.createdAt))
+                .limit(1);
+
             await db.insert(fileEdits).values({
                 sessionId: event.sessionId,
+                turnId: openTurn[0]?.id ?? null,
                 filePath: event.filePath,
                 fileExtension: event.fileExtension,
                 operation: event.operation,
