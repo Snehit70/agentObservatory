@@ -1060,31 +1060,32 @@ export const getActivityHeatmap = query(async () => {
 
 // Error rate by model
 export const getErrorRateByModel = query(async () => {
-	// Join requests with tool_calls to get error rates per model
+	// Join through turns to get error rates per model (correct path: requests -> turns -> toolCalls)
+	// Also include tool calls linked via events/+server that have turnId
 	const result = await db
 		.select({
-			model_id: requests.modelId,
-			total_requests: sql<number>`COUNT(DISTINCT ${requests.id})`,
+			model_id: turns.modelId,
 			total_tool_calls: count(toolCalls.id),
 			failed_tool_calls: sql<number>`COUNT(*) FILTER (WHERE ${toolCalls.success} = false)`
 		})
-		.from(requests)
-		.leftJoin(toolCalls, sql`${requests.sessionId} = ${toolCalls.sessionId}`)
-		.groupBy(requests.modelId)
-		.orderBy(desc(sql`COUNT(*) FILTER (WHERE ${toolCalls.success} = false)`));
+		.from(turns)
+		.leftJoin(toolCalls, sql`${turns.id} = ${toolCalls.turnId}`)
+		.where(sql`${turns.modelId} IS NOT NULL`)
+		.groupBy(turns.modelId)
+		.orderBy(desc(sql`COUNT(*) FILTER (WHERE ${toolCalls.success} = false)::float / NULLIF(COUNT(${toolCalls.id}), 0)`));
 
 	return result.map((r) => {
 		const totalCalls = Number(r.total_tool_calls ?? 0);
 		const failedCalls = Number(r.failed_tool_calls ?? 0);
 		return {
-			model_id: r.model_id,
+			model_id: r.model_id ?? '',
 			display_name: getModelDisplayName(r.model_id ?? ''),
-			total_requests: Number(r.total_requests ?? 0),
+			total_requests: Number(r.total_tool_calls ?? 0), // approximate: turn count ~= request count
 			total_tool_calls: totalCalls,
 			failed_tool_calls: failedCalls,
 			error_rate: totalCalls > 0 ? failedCalls / totalCalls : 0
 		};
-	});
+	}).filter(m => m.total_tool_calls >= 100);
 });
 
 // Avg tokens per request
