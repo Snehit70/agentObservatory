@@ -55,6 +55,14 @@ const turnState = new Map<string, {
     messageCount: number;
 }>();
 
+// Session-level cumulative token totals for deriving stable per-event deltas
+const tokenTotalsState = new Map<string, {
+    input: number;
+    cacheRead: number;
+    output: number;
+    reasoning: number;
+}>();
+
 interface CodexEvent {
     timestamp: string;
     type: string;
@@ -253,7 +261,7 @@ async function processSessionFile(filePath: string): Promise<void> {
 
         try {
             const event: CodexEvent = JSON.parse(line);
-            await processEvent(sessionId, event, meta);
+            await processEvent(sessionId, event, meta, currentLine);
             newEvents++;
 
             // Update metadata from session_meta events
@@ -281,27 +289,59 @@ async function processSessionFile(filePath: string): Promise<void> {
 async function processEvent(
     sessionId: string,
     event: CodexEvent,
-    meta: { modelProvider: string; model: string; cwd: string }
+    meta: { modelProvider: string; model: string; cwd: string },
+    lineNumber: number
 ): Promise<void> {
     const timestamp = new Date(event.timestamp);
 
     // Handle token_count events - these are the main telemetry
     if (event.type === 'event_msg' && event.payload?.type === 'token_count') {
         const info = event.payload.info;
-        const lastUsage: TokenUsage = info.last_token_usage;
-        
-        if (!lastUsage || (lastUsage.input_tokens === 0 && lastUsage.output_tokens === 0)) {
+        const lastUsage: TokenUsage | undefined = info?.last_token_usage;
+        const totalUsage: TokenUsage | undefined = info?.total_token_usage;
+        if (!lastUsage) return;
+
+        let rawInput = Number(lastUsage.input_tokens || 0);
+        let tokensCacheRead = Number(lastUsage.cached_input_tokens || 0);
+        let tokensOutput = Number(lastUsage.output_tokens || 0);
+        let tokensReasoning = Number(lastUsage.reasoning_output_tokens || 0);
+
+        if (totalUsage) {
+            const totalInput = Number(totalUsage.input_tokens || 0);
+            const totalCacheRead = Number(totalUsage.cached_input_tokens || 0);
+            const totalOutput = Number(totalUsage.output_tokens || 0);
+            const totalReasoning = Number(totalUsage.reasoning_output_tokens || 0);
+            const prev = tokenTotalsState.get(sessionId);
+
+            if (prev) {
+                rawInput = Math.max(0, totalInput - prev.input);
+                tokensCacheRead = Math.max(0, totalCacheRead - prev.cacheRead);
+                tokensOutput = Math.max(0, totalOutput - prev.output);
+                tokensReasoning = Math.max(0, totalReasoning - prev.reasoning);
+            } else {
+                rawInput = totalInput;
+                tokensCacheRead = totalCacheRead;
+                tokensOutput = totalOutput;
+                tokensReasoning = totalReasoning;
+            }
+
+            tokenTotalsState.set(sessionId, {
+                input: totalInput,
+                cacheRead: totalCacheRead,
+                output: totalOutput,
+                reasoning: totalReasoning
+            });
+        }
+
+        if (rawInput === 0 && tokensOutput === 0 && tokensReasoning === 0 && tokensCacheRead === 0) {
             return;
         }
 
-        const turn = turnState.get(sessionId);
-        const messageId = turn?.turnId || `codex-${sessionId}-${timestamp.getTime()}`;
+        const messageId = `codex-${sessionId}-line-${lineNumber}`;
         const dateStr = timestamp.toISOString().split('T')[0];
 
-        const tokensInput = lastUsage.input_tokens || 0;
-        const tokensOutput = lastUsage.output_tokens || 0;
-        const tokensReasoning = lastUsage.reasoning_output_tokens || 0;
-        const tokensCacheRead = lastUsage.cached_input_tokens || 0;
+        // Codex input includes cached input; normalize to non-cached input
+        const tokensInput = Math.max(0, rawInput - tokensCacheRead);
 
         try {
             // Insert request record
@@ -609,26 +649,50 @@ async function findSessionFiles(dir: string): Promise<string[]> {
 }
 
 async function seedExistingFiles(): Promise<void> {
-    console.log(`[Codex] Seeding existing session files from ${SESSIONS_DIR}`);
+    console.log(`[Codex] Scanning existing session files from ${SESSIONS_DIR}`);
 
     const files = await findSessionFiles(SESSIONS_DIR);
     console.log(`[Codex] Found ${files.length} existing session files`);
 
+    // Query DB for sessions that already have codex requests synced
+    const existingSessions = await db.execute(sql`
+        SELECT DISTINCT session_id FROM requests WHERE agent = 'codex'
+    `);
+    const syncedIds = new Set(existingSessions.map((r: any) => r.session_id));
+
+    let seeded = 0;
+    let toSync = 0;
+
     for (const filePath of files) {
-        try {
-            const content = await readFile(filePath, 'utf-8');
-            const lineCount = content.split('\n').length;
-            fileProgress.set(filePath, lineCount);
-        } catch {
-            // Ignore files that disappear while seeding
+        const filename = filePath.split('/').pop() || '';
+        const sessionId = extractSessionId(filename);
+
+        if (sessionId && syncedIds.has(sessionId)) {
+            // Already synced — mark as processed to avoid re-inserting
+            try {
+                const content = await readFile(filePath, 'utf-8');
+                const lineCount = content.split('\n').length;
+                fileProgress.set(filePath, lineCount);
+                seeded++;
+            } catch {
+                // Ignore files that disappear
+            }
+        } else {
+            // Not yet synced — leave out of fileProgress so re-scan picks it up
+            toSync++;
         }
     }
 
-    console.log(`[Codex] Existing files seeded; only new live events will be processed`);
+    console.log(`[Codex] ${seeded} files already synced, ${toSync} files pending sync`);
 }
+
+// Track watched directories to avoid duplicate watchers
+const watchedDirs = new Set<string>();
 
 function watchDirectory(dir: string, depth: number = 0): void {
     if (depth > 4) return; // year/month/day/file = 3 levels max
+    if (watchedDirs.has(dir)) return;
+    watchedDirs.add(dir);
     
     try {
         watch(dir, async (eventType, filename) => {
@@ -640,8 +704,17 @@ function watchDirectory(dir: string, depth: number = 0): void {
                 const s = await stat(fullPath);
                 
                 if (s.isDirectory()) {
-                    // New day/month/year directory created
+                    // New day/month/year directory created - watch it and its children
                     watchDirectory(fullPath, depth + 1);
+                    // Also scan for any files already in the new dir
+                    const children = await readdir(fullPath, { withFileTypes: true });
+                    for (const child of children) {
+                        if (child.isDirectory()) {
+                            watchDirectory(join(fullPath, child.name), depth + 2);
+                        } else if (child.name.endsWith('.jsonl')) {
+                            setTimeout(() => processSessionFile(join(fullPath, child.name)), 500);
+                        }
+                    }
                 } else if (filename.endsWith('.jsonl')) {
                     // New or updated session file
                     setTimeout(() => processSessionFile(fullPath), 500);
@@ -679,6 +752,16 @@ async function main(): Promise<void> {
     // Match the OpenCode watcher: ignore old history and stream only new activity.
     await seedExistingFiles();
     
+    // Immediate one-time catch-up for any unsynced files
+    const initialFiles = await findSessionFiles(SESSIONS_DIR);
+    const initialPending = initialFiles.filter((f) => !fileProgress.has(f));
+    if (initialPending.length > 0) {
+        console.log(`[Codex] Initial catch-up: syncing ${initialPending.length} pending files`);
+        for (const f of initialPending) {
+            await processSessionFile(f);
+        }
+    }
+
     // Watch for new session files
     console.log(`[Codex] Watching for new sessions...`);
     watchDirectory(SESSIONS_DIR);
@@ -689,7 +772,7 @@ async function main(): Promise<void> {
             // When session index updates, re-scan for new files
             const files = await findSessionFiles(SESSIONS_DIR);
             const unprocessed = files.filter(f => !fileProgress.has(f));
-            for (const f of unprocessed.slice(0, 5)) {
+            for (const f of unprocessed) {
                 await processSessionFile(f);
             }
         });
@@ -697,23 +780,23 @@ async function main(): Promise<void> {
         // session_index.jsonl doesn't exist
     }
     
-    // Periodic re-scan every 5 minutes
+    // Periodic re-scan every 60 seconds - catches files missed by fs.watch
     setInterval(async () => {
         const files = await findSessionFiles(SESSIONS_DIR);
-        // Re-process only files we've already seen if they were appended to.
-        for (const f of files.slice(0, 10)) {
-            const currentSize = fileProgress.get(f) || 0;
+        for (const f of files) {
             try {
                 const content = await readFile(f, 'utf-8');
                 const lineCount = content.split('\n').length;
-                if (lineCount > currentSize) {
+                const knownLines = fileProgress.get(f) || 0;
+                // Process if file is new (not in fileProgress) or has new lines
+                if (lineCount > knownLines) {
                     await processSessionFile(f);
                 }
             } catch (e) {
                 // File was deleted
             }
         }
-    }, 5 * 60 * 1000);
+    }, 60 * 1000);
 }
 
 main().catch(console.error);
