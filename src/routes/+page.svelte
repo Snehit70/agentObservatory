@@ -773,15 +773,31 @@
 		return `${(part / total) * 100}%`;
 	}
 
+	function getTotalModelTokens(model: CostByModelItem): number {
+		return (
+			model.tokens_input +
+			model.tokens_output +
+			model.tokens_reasoning +
+			model.tokens_cache_read +
+			model.tokens_cache_write
+		);
+	}
+
+	function getEffectiveInputTokens(model: CostByModelItem): number {
+		return model.tokens_input + model.tokens_cache_read + model.tokens_cache_write;
+	}
+
+	function getEffectiveOutputTokens(model: CostByModelItem): number {
+		return model.tokens_output + model.tokens_reasoning;
+	}
+
 	// Derived data for charts
 	const modelCostLimit = 8;
 	let modelChartData = $derived.by(() => {
 		const items = costByModel ?? [];
 		const topItems = items.slice(0, modelCostLimit);
-		const getTotalTokens = (d: CostByModelItem) =>
-			d.tokens_input + d.tokens_output + d.tokens_reasoning + d.tokens_cache_read + d.tokens_cache_write;
 		const getValue = (d: CostByModelItem) =>
-			modelViewMode === 'cost' ? d.cost_usd : getTotalTokens(d);
+			modelViewMode === 'cost' ? d.cost_usd : getTotalModelTokens(d);
 		const topData = topItems.map((d) => ({
 			label: d.display_name,
 			value: getValue(d)
@@ -800,6 +816,16 @@
 			(totals?.total_cache_read ?? 0) +
 			(totals?.total_cache_write ?? 0)
 	);
+	let modelsUsageData = $derived.by(() => {
+		const items = modelsData ?? [];
+		const totalUsageTokens = items.reduce((sum, model) => sum + getTotalModelTokens(model), 0);
+
+		return [...items].sort((a, b) => {
+			const aShare = totalUsageTokens > 0 ? getTotalModelTokens(a) / totalUsageTokens : 0;
+			const bShare = totalUsageTokens > 0 ? getTotalModelTokens(b) / totalUsageTokens : 0;
+			return bShare - aShare;
+		});
+	});
 	let costPer1MTokens = $derived.by(() => {
 		if (!totals || totalTokens <= 0) return 0;
 		return totals.total_cost / (totalTokens / 1_000_000);
@@ -1329,10 +1355,10 @@
 	{/if}
 
 	{#if activeTab === 'models'}
-	<!-- Model Performance Table -->
+	<!-- Model Usage Table -->
 	<section class="panel reveal" style="animation-delay: 360ms; margin-bottom: 1.5rem;">
 		<div class="section-header">
-			<h2 class="section-title">model performance</h2>
+			<h2 class="section-title">model usage</h2>
 			<div class="range-buttons">
 				{#each ['all', 'day', 'week', 'month'] as r}
 					<button type="button" class="range-btn {modelPerformanceRange === (r as TimeRange) ? 'active' : ''}" onclick={() => (modelPerformanceRange = r as TimeRange)}>
@@ -1341,7 +1367,9 @@
 				{/each}
 			</div>
 		</div>
-		<div class="section-subtitle" style="margin-bottom: 1rem;">{modelPerformanceRange === 'all' ? 'all time' : 'last ' + modelPerformanceRange}</div>
+		<div class="section-subtitle" style="margin-bottom: 1rem;">
+			{modelPerformanceRange === 'all' ? 'all time' : 'last ' + modelPerformanceRange} • ranked by share of total tokens
+		</div>
 		{#if modelsDataLoading || modelPerformanceLoading}
 			{@render loadingState()}
 		{:else if modelsDataError || modelPerformanceError}
@@ -1356,22 +1384,26 @@
 						<tr>
 							<th>model</th>
 							<th>requests</th>
-							<th>input</th>
-							<th>output</th>
+							<th>total tokens</th>
+							<th>effective input</th>
+							<th>effective output</th>
+							<th>share</th>
 							<th>avg duration</th>
 							<th>cost</th>
 						</tr>
 					</thead>
 					<tbody>
-						{#each modelsData as model (model.model_id)}
+						{#each modelsUsageData as model (model.model_id)}
 							{@const avgDuration = modelPerformance?.find((d) => d.model_id === model.model_id)}
 							<tr>
 								<td class="font-mono text-sm">
 									{model.display_name}
 								</td>
 								<td>{model.request_count.toLocaleString()}</td>
-								<td class="text-accent">{formatNumber(model.tokens_input)}</td>
-								<td class="text-primary">{formatNumber(model.tokens_output)}</td>
+								<td>{formatNumber(getTotalModelTokens(model))}</td>
+								<td class="text-accent">{formatNumber(getEffectiveInputTokens(model))}</td>
+								<td class="text-primary">{formatNumber(getEffectiveOutputTokens(model))}</td>
+								<td>{formatPercent(getTotalModelTokens(model), totalTokens)}</td>
 								<td>{avgDuration ? formatDuration(avgDuration.avg_duration_ms) : '-'}</td>
 								<td class="text-accent font-medium">{formatCost(model.cost_usd)}</td>
 							</tr>

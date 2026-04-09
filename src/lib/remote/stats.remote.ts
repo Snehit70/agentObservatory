@@ -974,7 +974,7 @@ export const getCostForecast = query(v.optional(v.number()), async (lookbackDays
 		});
 	}
 
-	const days = recentRows.length > 0 ? daysToLookBack : 0;
+	const days = totalCost > 0 ? daysToLookBack : 0;
 
 	const mtdRows = await db
 		.select({
@@ -1011,7 +1011,7 @@ export const getCostForecast = query(v.optional(v.number()), async (lookbackDays
 		});
 	}
 
-	const mtdDays = mtdRows.length > 0 ? new Date().getDate() : 0;
+	const mtdDays = mtdCost > 0 ? new Date().getDate() : 0;
 
 	const dailyRate = days > 0 ? totalCost / days : 0;
 	const monthlyProjection = dailyRate * 30;
