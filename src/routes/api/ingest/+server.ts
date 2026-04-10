@@ -147,7 +147,7 @@ export const POST: RequestHandler = async ({ request }) => {
                     metadata: event.metadata,
                     durationMs: event.durationMs,
                     success: event.success, 
-                    errorMessage: event.errorMessage,
+                    errorMessage: event.success === true ? null : event.errorMessage ?? null,
                     completedAt: new Date(event.createdAt)
                 })
                 .where(sql`call_id = ${event.callId}`);

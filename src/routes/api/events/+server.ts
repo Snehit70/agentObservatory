@@ -257,7 +257,7 @@ export const POST: RequestHandler = async ({ request }) => {
 						metadata: event.metadata,
 						durationMs: event.durationMs ?? null,
 						success: event.success ?? null,
-						errorMessage: event.errorMessage ?? null,
+						errorMessage: event.success === true ? null : event.errorMessage ?? null,
 						startedAt: timestamp,
 						completedAt: timestamp
 					})
@@ -269,7 +269,7 @@ export const POST: RequestHandler = async ({ request }) => {
 							metadata: event.metadata,
 							durationMs: event.durationMs ?? null,
 							success: event.success ?? null,
-							errorMessage: event.errorMessage ?? null,
+							errorMessage: event.success === true ? null : event.errorMessage ?? null,
 							completedAt: timestamp
 						}
 					});

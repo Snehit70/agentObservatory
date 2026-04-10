@@ -1292,7 +1292,7 @@ tbody tr:hover {
 
 .tool-item {
 	display: grid;
-	grid-template-columns: 180px 1fr 100px;
+	grid-template-columns: 180px 1fr 140px;
 	gap: 0.75rem;
 	align-items: center;
 	padding: 0.5rem 0;
@@ -1452,6 +1452,21 @@ tbody tr:hover {
 	font-variant-numeric: tabular-nums;
 }
 
+.tool-rate {
+	font-variant-numeric: tabular-nums;
+	font-size: 0.7rem;
+	min-width: 2.5rem;
+	text-align: right;
+}
+
+.tool-dur {
+	font-size: 0.68rem;
+	color: var(--color-text-tertiary);
+	font-variant-numeric: tabular-nums;
+	min-width: 2.5rem;
+	text-align: right;
+}
+
 .tool-status {
 	font-size: 0.85rem;
 	margin-left: 0.25rem;
@@ -1465,4 +1480,81 @@ tbody tr:hover {
 	border-top: 1px solid var(--color-grid-line);
 	font-size: 0.7rem;
 	color: var(--color-text-tertiary);
+}
+
+/* Tools tab shared filter bar */
+.tools-filter-bar {
+	display: flex;
+	align-items: center;
+	gap: 0.75rem;
+	margin-bottom: 1rem;
+	padding: 0.5rem 0.75rem;
+	background: var(--color-bg-elevated);
+	border: 1px solid var(--color-grid-line);
+	border-radius: 4px;
+}
+
+.tools-filter-label {
+	font-size: 0.65rem;
+	text-transform: uppercase;
+	letter-spacing: 0.1em;
+	color: var(--color-text-tertiary);
+	white-space: nowrap;
+}
+
+.tools-filter-desc {
+	font-size: 0.7rem;
+	color: var(--color-text-tertiary);
+	margin-left: auto;
+}
+
+/* Top Failing Commands List */
+.failing-commands-list {
+	display: flex;
+	flex-direction: column;
+	gap: 0.5rem;
+}
+
+.failing-cmd-item {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	padding: 0.4rem 0;
+	border-bottom: 1px solid var(--color-grid-line);
+}
+
+.failing-cmd-item:last-child {
+	border-bottom: none;
+}
+
+.failing-cmd-text {
+	font-family: var(--font-mono);
+	font-size: 0.72rem;
+	color: var(--color-text-secondary);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	max-width: 65%;
+}
+
+.failing-cmd-stats {
+	display: flex;
+	align-items: center;
+	gap: 0.4rem;
+	font-size: 0.7rem;
+	font-variant-numeric: tabular-nums;
+}
+
+.failing-cmd-count {
+	font-weight: 600;
+}
+
+.failing-cmd-total {
+	color: var(--color-text-tertiary);
+}
+
+.failing-cmd-rate {
+	font-weight: 600;
+	min-width: 2.5rem;
+	text-align: right;
 }

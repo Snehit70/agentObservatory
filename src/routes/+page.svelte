@@ -5,6 +5,7 @@
 	import DonutChart from '$lib/components/DonutChart.svelte';
 	import TokensChart from '$lib/components/TokensChart.svelte';
 	import TimeExplorer from '$lib/components/TimeExplorer.svelte';
+	import ToolTrendChart from '$lib/components/ToolTrendChart.svelte';
 	import {
 		getTotals,
 		getCostByModel,
@@ -28,7 +29,9 @@
 		getToolStats,
 		getBashCommandBreakdown,
 		getSessionDepthStats,
-		getLatencyOverTime
+		getLatencyOverTime,
+		getToolCallTrend,
+		getTopFailingBashCommands
 	} from '$lib/remote/stats.remote';
 	import FileTypeChart from '$lib/components/FileTypeChart.svelte';
 	import MultiLineChart from '$lib/components/MultiLineChart.svelte';
@@ -238,6 +241,10 @@
 	let toolStats = $state<ToolStatsItem[] | null>(null);
 	let bashBreakdown = $state<BashCommandBreakdown[] | null>(null);
 	let sessionDepthStats = $state<SessionDepthStats | null>(null);
+	let toolCallTrend = $state<
+		{ label: string; total: number; successes: number; failures: number }[] | null
+	>(null);
+	let topFailingCommands = $state<{ command: string; total: number; failures: number; fail_rate: number }[] | null>(null);
 	let latencyOverTimeData = $state<{
 		label: string;
 		title?: string;
@@ -250,6 +257,7 @@
 	let costMetricsRange = $state<TimeRange>('all');
 	let performanceMetricsRange = $state<TimeRange>('all');
 	let latencyRange = $state<TimeRange>('month');
+	let toolsRange = $state<TimeRange>('all');
 
 	// Loading states
 	let totalsLoading = $state(true);
@@ -276,6 +284,8 @@
 	let toolStatsLoading = $state(true);
 	let bashBreakdownLoading = $state(true);
 	let sessionDepthLoading = $state(true);
+	let toolCallTrendLoading = $state(true);
+	let topFailingCommandsLoading = $state(true);
 
 	// Error states
 	let totalsError = $state<Error | null>(null);
@@ -302,6 +312,8 @@
 	let toolStatsError = $state<Error | null>(null);
 	let bashBreakdownError = $state<Error | null>(null);
 	let sessionDepthError = $state<Error | null>(null);
+	let toolCallTrendError = $state<Error | null>(null);
+	let topFailingCommandsError = $state<Error | null>(null);
 
 	let currentTime = $state(new Date().toLocaleTimeString());
 
@@ -444,11 +456,11 @@
 		toolSuccessSummaryError = null;
 		try {
 			const days =
-				performanceMetricsRange === 'day'
+				toolsRange === 'day'
 					? 1
-					: performanceMetricsRange === 'week'
+					: toolsRange === 'week'
 						? 7
-						: performanceMetricsRange === 'month'
+						: toolsRange === 'month'
 							? 30
 							: undefined;
 			toolSuccessSummary = await getToolSuccessSummary(days);
@@ -632,7 +644,15 @@
 		toolStatsLoading = true;
 		toolStatsError = null;
 		try {
-			toolStats = await getToolStats();
+			const days =
+				toolsRange === 'day'
+					? 1
+					: toolsRange === 'week'
+						? 7
+						: toolsRange === 'month'
+							? 30
+							: undefined;
+			toolStats = await getToolStats(days);
 		} catch (e) {
 			toolStatsError = e instanceof Error ? e : new Error('Failed to load');
 		} finally {
@@ -644,11 +664,45 @@
 		bashBreakdownLoading = true;
 		bashBreakdownError = null;
 		try {
-			bashBreakdown = await getBashCommandBreakdown();
+			const days =
+				toolsRange === 'day'
+					? 1
+					: toolsRange === 'week'
+						? 7
+						: toolsRange === 'month'
+							? 30
+							: undefined;
+			bashBreakdown = await getBashCommandBreakdown(days);
 		} catch (e) {
 			bashBreakdownError = e instanceof Error ? e : new Error('Failed to load');
 		} finally {
 			bashBreakdownLoading = false;
+		}
+	}
+
+	async function fetchToolCallTrend() {
+		toolCallTrendLoading = true;
+		toolCallTrendError = null;
+		try {
+			toolCallTrend = await getToolCallTrend(toolsRange === 'all' ? 'all' : toolsRange);
+		} catch (e) {
+			toolCallTrendError = e instanceof Error ? e : new Error('Failed to load');
+		} finally {
+			toolCallTrendLoading = false;
+		}
+	}
+
+	async function fetchTopFailingCommands() {
+		topFailingCommandsLoading = true;
+		topFailingCommandsError = null;
+		try {
+			const days =
+				toolsRange === 'day' ? 1 : toolsRange === 'week' ? 7 : toolsRange === 'month' ? 30 : undefined;
+			topFailingCommands = await getTopFailingBashCommands(days);
+		} catch (e) {
+			topFailingCommandsError = e instanceof Error ? e : new Error('Failed to load');
+		} finally {
+			topFailingCommandsLoading = false;
 		}
 	}
 
@@ -689,6 +743,8 @@
 		fetchToolStats();
 		fetchBashBreakdown();
 		fetchSessionDepthStats();
+		fetchToolCallTrend();
+		fetchTopFailingCommands();
 	}
 
 	$effect(() => {
@@ -715,9 +771,17 @@
 	$effect(() => {
 		performanceMetricsRange;
 		fetchLatencyStats();
-		fetchToolSuccessSummary();
 		fetchAvgTokensPerRequest();
 		fetchCacheHitRate();
+	});
+
+	$effect(() => {
+		toolsRange;
+		fetchToolSuccessSummary();
+		fetchToolStats();
+		fetchBashBreakdown();
+		fetchToolCallTrend();
+		fetchTopFailingCommands();
 	});
 
 	$effect(() => {
@@ -1596,9 +1660,54 @@
 	{#if activeTab === 'tools'}
 	{@const displayedTools = toolStats ? toolStats.slice(0, 12) : []}
 	{@const maxToolCalls = displayedTools.length > 0 ? Math.max(...displayedTools.map(t => t.call_count), 1) : 1}
+
+	<!-- Shared range filter for all tool sections -->
+	<div class="tools-filter-bar reveal" style="animation-delay: 440ms;">
+		<span class="tools-filter-label">time range</span>
+		<div class="range-buttons">
+			{#each (['all', 'day', 'week', 'month'] as const) as r}
+				<button
+					type="button"
+					class="range-btn {toolsRange === r ? 'active' : ''}"
+					onclick={() => (toolsRange = r)}
+				>
+					{r === 'all' ? 'ALL' : r === 'day' ? '24H' : r === 'week' ? '7D' : '30D'}
+				</button>
+			{/each}
+		</div>
+		<span class="tools-filter-desc">{toolsRange === 'all' ? 'all time' : toolsRange === 'day' ? 'last 24 hours' : toolsRange === 'week' ? 'last 7 days' : 'last 30 days'}</span>
+	</div>
+
+	<!-- Tool Call Trend Chart -->
+	<section class="panel reveal" style="animation-delay: 445ms; margin-bottom: 1.5rem;">
+		<div class="section-header">
+			<h2 class="section-title">tool call volume</h2>
+			<div class="section-subtitle" style="margin-top: 0;">
+				{toolsRange === 'day'
+					? 'hourly · last 24h'
+					: toolsRange === 'week'
+						? 'daily · last 7 days'
+						: toolsRange === 'month'
+							? 'daily · last 30 days'
+							: 'weekly · all time'}
+			</div>
+		</div>
+		{#if toolCallTrendLoading}
+			{@render loadingState()}
+		{:else if toolCallTrendError}
+			{@render errorState(toolCallTrendError, fetchToolCallTrend)}
+		{:else if toolCallTrend && toolCallTrend.length > 0}
+			<ToolTrendChart data={toolCallTrend} height={200} />
+		{:else}
+			<div class="text-tertiary text-sm py-8 text-center">No trend data available</div>
+		{/if}
+	</section>
+
 	<!-- Tool Success Overview -->
 	<section class="panel reveal" style="animation-delay: 450ms; margin-bottom: 1.5rem;">
-		<h2 class="section-title">tool success rate</h2>
+		<div class="section-header">
+			<h2 class="section-title">tool success rate</h2>
+		</div>
 		{#if toolSuccessSummaryLoading}
 			{@render loadingState()}
 		{:else if toolSuccessSummaryError}
@@ -1643,12 +1752,18 @@
 
 	<!-- Tool Breakdown -->
 	<section class="panel reveal" style="animation-delay: 470ms; margin-bottom: 1.5rem;">
-		<h2 class="section-title">tool breakdown by usage</h2>
-		{#if toolSuccessSummaryLoading}
+		<div class="section-header">
+			<h2 class="section-title">tool breakdown by usage</h2>
+			<div class="section-subtitle" style="margin-top: 0;">top 12 tools</div>
+		</div>
+		{#if toolStatsLoading}
 			{@render loadingState()}
+		{:else if toolStatsError}
+			{@render errorState(toolStatsError, fetchToolStats)}
 		{:else if displayedTools.length > 0}
 			<div class="tool-list">
 				{#each displayedTools as tool (tool.tool)}
+					{@const statusColor = tool.success_rate > 0.9 ? 'var(--color-text-tertiary)' : tool.success_rate > 0.7 ? '#f59e0b' : '#ef4444'}
 					<div class="tool-item">
 						<div class="tool-name">{tool.tool}</div>
 						<div class="tool-bar-container">
@@ -1659,7 +1774,13 @@
 						</div>
 						<div class="tool-stats">
 							<span class="tool-count">{tool.call_count.toLocaleString()}</span>
-							<span class="tool-status" style="color: {tool.success_rate > 0.9 ? 'var(--color-text-tertiary)' : tool.success_rate > 0.7 ? '#f59e0b' : '#ef4444'};">
+							<span class="tool-rate" style="color: {statusColor};">
+								{(tool.success_rate * 100).toFixed(0)}%
+							</span>
+							{#if tool.avg_duration_ms > 0}
+								<span class="tool-dur">{formatDuration(tool.avg_duration_ms)}</span>
+							{/if}
+							<span class="tool-status" style="color: {statusColor};">
 								{tool.success_rate > 0.9 ? '✓' : tool.success_rate > 0.7 ? '△' : '✗'}
 							</span>
 						</div>
@@ -1667,9 +1788,9 @@
 				{/each}
 			</div>
 			<div class="tool-legend">
-				<span>✓ high success</span>
-				<span>△ some issues</span>
-				<span style="color: #ef4444;">✗ needs attention</span>
+				<span>✓ high success (&gt;90%)</span>
+				<span>△ some issues (70–90%)</span>
+				<span style="color: #ef4444;">✗ needs attention (&lt;70%)</span>
 			</div>
 		{:else}
 			<div class="text-tertiary text-sm py-8 text-center">No tool data available</div>
@@ -1678,12 +1799,17 @@
 
 	{@const maxBashCount = bashBreakdown && bashBreakdown.length > 0 ? Math.max(...bashBreakdown.map(b => b.count), 1) : 1}
 	<section class="panel reveal" style="animation-delay: 490ms; margin-bottom: 1.5rem;">
-		<h2 class="section-title">bash commands by category</h2>
+		<div class="section-header">
+			<h2 class="section-title">bash commands by category</h2>
+		</div>
 		{#if bashBreakdownLoading}
 			{@render loadingState()}
+		{:else if bashBreakdownError}
+			{@render errorState(bashBreakdownError, fetchBashBreakdown)}
 		{:else if bashBreakdown && bashBreakdown.length > 0}
 			<div class="tool-list">
 				{#each bashBreakdown as item (item.category)}
+					{@const statusColor = item.success_rate > 0.9 ? 'var(--color-text-tertiary)' : item.success_rate > 0.7 ? '#f59e0b' : '#ef4444'}
 					<div class="tool-item bash-item">
 						<div class="tool-name">{item.category}</div>
 						<div class="tool-bar-container">
@@ -1694,7 +1820,10 @@
 						</div>
 						<div class="tool-stats">
 							<span class="tool-count">{item.count.toLocaleString()}</span>
-							<span class="tool-status" style="color: {item.success_rate > 0.9 ? 'var(--color-text-tertiary)' : item.success_rate > 0.7 ? '#f59e0b' : '#ef4444'};">
+							<span class="tool-rate" style="color: {statusColor};">
+								{(item.success_rate * 100).toFixed(0)}%
+							</span>
+							<span class="tool-status" style="color: {statusColor};">
 								{item.success_rate > 0.9 ? '✓' : item.success_rate > 0.7 ? '△' : '✗'}
 							</span>
 						</div>
@@ -1706,6 +1835,35 @@
 			</div>
 		{:else}
 			<div class="text-tertiary text-sm py-8 text-center">No bash command data available</div>
+		{/if}
+	</section>
+
+	<!-- Top Failing Bash Commands -->
+	<section class="panel reveal" style="animation-delay: 510ms; margin-bottom: 1.5rem;">
+		<div class="section-header">
+			<h2 class="section-title">top failing commands</h2>
+			<div class="section-subtitle" style="margin-top: 0;">bash commands with most failures · min 2 failures</div>
+		</div>
+		{#if topFailingCommandsLoading}
+			{@render loadingState()}
+		{:else if topFailingCommandsError}
+			{@render errorState(topFailingCommandsError, fetchTopFailingCommands)}
+		{:else if topFailingCommands && topFailingCommands.length > 0}
+			<div class="failing-commands-list">
+				{#each topFailingCommands as cmd (cmd.command)}
+					{@const failColor = cmd.fail_rate > 50 ? '#ef4444' : cmd.fail_rate > 25 ? '#f59e0b' : 'var(--color-text-tertiary)'}
+					<div class="failing-cmd-item">
+						<div class="failing-cmd-text" title={cmd.command}>{cmd.command.length > 70 ? cmd.command.slice(0, 70) + '…' : cmd.command}</div>
+						<div class="failing-cmd-stats">
+							<span class="failing-cmd-count" style="color: {failColor};">{cmd.failures} fail</span>
+							<span class="failing-cmd-total">/ {cmd.total} total</span>
+							<span class="failing-cmd-rate" style="color: {failColor};">{cmd.fail_rate.toFixed(0)}%</span>
+						</div>
+					</div>
+				{/each}
+			</div>
+		{:else}
+			<div class="text-tertiary text-sm py-8 text-center">No failing commands in this period</div>
 		{/if}
 	</section>
 	{/if}

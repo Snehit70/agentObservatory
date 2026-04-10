@@ -452,7 +452,15 @@ export const getRecentRequests = query(async () => {
 });
 
 // Tool usage stats
-export const getToolStats = query(async () => {
+export const getToolStats = query(v.optional(v.number()), async (days?: number) => {
+	const whereClause =
+		days != null
+			? and(
+					isNotNull(toolCalls.completedAt),
+					sql`${toolCalls.startedAt} >= NOW() - make_interval(days => ${days})`
+				)
+			: isNotNull(toolCalls.completedAt);
+
 	const result = await db
 		.select({
 			tool: toolCalls.tool,
@@ -463,7 +471,7 @@ export const getToolStats = query(async () => {
 			total_duration_ms: sum(toolCalls.durationMs)
 		})
 		.from(toolCalls)
-		.where(isNotNull(toolCalls.completedAt))
+		.where(whereClause)
 		.groupBy(toolCalls.tool)
 		.orderBy(desc(count()));
 
@@ -536,14 +544,19 @@ export const getToolSuccessSummary = query(v.optional(v.number()), async (days?:
 	};
 });
 
-export const getBashCommandBreakdown = query(async () => {
+export const getBashCommandBreakdown = query(v.optional(v.number()), async (days?: number) => {
+	const whereClause =
+		days != null
+			? sql`${toolCalls.tool} = 'bash' AND ${toolCalls.args} IS NOT NULL AND ${toolCalls.startedAt} >= NOW() - make_interval(days => ${days})`
+			: sql`${toolCalls.tool} = 'bash' AND ${toolCalls.args} IS NOT NULL`;
+
 	const rows = await db
 		.select({
 			args: toolCalls.args,
 			success: toolCalls.success
 		})
 		.from(toolCalls)
-		.where(sql`${toolCalls.tool} = 'bash' AND ${toolCalls.args} IS NOT NULL`);
+		.where(whereClause);
 
 	const categories: Record<string, { count: number; success: number; samples: string[] }> = {};
 
@@ -617,6 +630,120 @@ function categorizeBashCommand(command: string): { category: string; matched: st
 	}
 	return { category: 'other', matched: '' };
 }
+
+const timeRangeSchemaTools = v.union([
+	v.literal('day'),
+	v.literal('week'),
+	v.literal('month'),
+	v.literal('all')
+]);
+type ToolTimeRange = 'day' | 'week' | 'month' | 'all';
+
+type TrendRow = {
+	label: string;
+	total: string | number;
+	successes: string | number;
+	failures: string | number;
+};
+
+function mapTrendRows(rows: TrendRow[]) {
+	return rows.map((r) => ({
+		label: String(r.label),
+		total: Number(r.total),
+		successes: Number(r.successes),
+		failures: Number(r.failures)
+	}));
+}
+
+export const getToolCallTrend = query(timeRangeSchemaTools, async (range: ToolTimeRange) => {
+	if (range === 'day') {
+		const result = await db.execute(sql`
+			SELECT
+				TO_CHAR(DATE_TRUNC('hour', started_at AT TIME ZONE 'Asia/Kolkata'), 'HH24:MI') AS label,
+				COUNT(*)::int AS total,
+				COUNT(*) FILTER (WHERE success = true)::int AS successes,
+				COUNT(*) FILTER (WHERE success = false)::int AS failures
+			FROM tool_calls
+			WHERE started_at >= NOW() - INTERVAL '24 hours'
+			GROUP BY DATE_TRUNC('hour', started_at AT TIME ZONE 'Asia/Kolkata')
+			ORDER BY DATE_TRUNC('hour', started_at AT TIME ZONE 'Asia/Kolkata')
+		`);
+		return mapTrendRows(result as unknown as TrendRow[]);
+	}
+
+	if (range === 'week') {
+		const result = await db.execute(sql`
+			SELECT
+				TO_CHAR(DATE(started_at AT TIME ZONE 'Asia/Kolkata'), 'Mon DD') AS label,
+				COUNT(*)::int AS total,
+				COUNT(*) FILTER (WHERE success = true)::int AS successes,
+				COUNT(*) FILTER (WHERE success = false)::int AS failures
+			FROM tool_calls
+			WHERE started_at >= NOW() - INTERVAL '7 days'
+			GROUP BY DATE(started_at AT TIME ZONE 'Asia/Kolkata')
+			ORDER BY DATE(started_at AT TIME ZONE 'Asia/Kolkata')
+		`);
+		return mapTrendRows(result as unknown as TrendRow[]);
+	}
+
+	if (range === 'month') {
+		const result = await db.execute(sql`
+			SELECT
+				TO_CHAR(DATE(started_at AT TIME ZONE 'Asia/Kolkata'), 'Mon DD') AS label,
+				COUNT(*)::int AS total,
+				COUNT(*) FILTER (WHERE success = true)::int AS successes,
+				COUNT(*) FILTER (WHERE success = false)::int AS failures
+			FROM tool_calls
+			WHERE started_at >= NOW() - INTERVAL '30 days'
+			GROUP BY DATE(started_at AT TIME ZONE 'Asia/Kolkata')
+			ORDER BY DATE(started_at AT TIME ZONE 'Asia/Kolkata')
+		`);
+		return mapTrendRows(result as unknown as TrendRow[]);
+	}
+
+	const result = await db.execute(sql`
+		SELECT
+			TO_CHAR(DATE_TRUNC('week', started_at AT TIME ZONE 'Asia/Kolkata'), 'Mon DD') AS label,
+			COUNT(*)::int AS total,
+			COUNT(*) FILTER (WHERE success = true)::int AS successes,
+			COUNT(*) FILTER (WHERE success = false)::int AS failures
+		FROM tool_calls
+		GROUP BY DATE_TRUNC('week', started_at AT TIME ZONE 'Asia/Kolkata')
+		ORDER BY DATE_TRUNC('week', started_at AT TIME ZONE 'Asia/Kolkata')
+	`);
+	return mapTrendRows(result as unknown as TrendRow[]);
+});
+
+export const getTopFailingBashCommands = query(v.optional(v.number()), async (days?: number) => {
+	const timeFilter = days != null
+		? sql`AND started_at >= NOW() - make_interval(days => ${days})`
+		: sql``;
+
+	const result = await db.execute(sql`
+		SELECT
+			jsonb_extract_path_text(args, 'command') AS command,
+			COUNT(*)::int AS total,
+			COUNT(*) FILTER (WHERE success = false)::int AS failures,
+			ROUND(COUNT(*) FILTER (WHERE success = false)::numeric / COUNT(*) * 100, 1)::float AS fail_rate
+		FROM tool_calls
+		WHERE tool = 'bash'
+		  AND args IS NOT NULL
+		  AND completed_at IS NOT NULL
+		  ${timeFilter}
+		GROUP BY jsonb_extract_path_text(args, 'command')
+		HAVING COUNT(*) FILTER (WHERE success = false) >= 2
+		ORDER BY failures DESC
+		LIMIT 8
+	`);
+
+	type FailRow = { command: string; total: string | number; failures: string | number; fail_rate: string | number };
+	return (result as unknown as FailRow[]).map(r => ({
+		command: r.command ?? '',
+		total: Number(r.total),
+		failures: Number(r.failures),
+		fail_rate: Number(r.fail_rate)
+	}));
+});
 
 export const getPeakDays = query(async () => {
 	const rows = await db
