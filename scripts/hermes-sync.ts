@@ -1,7 +1,6 @@
 import 'dotenv/config';
 import { Database } from 'bun:sqlite';
 import { drizzle } from 'drizzle-orm/postgres-js';
-import { eq } from 'drizzle-orm';
 import { sql } from 'drizzle-orm';
 import * as schema from '../src/lib/db/schema';
 import { normalizeModelId } from '../src/lib/server/model-pricing';
@@ -83,9 +82,27 @@ type HermesAssistantToolCallEntry = {
 	};
 };
 
+type PendingUserState = {
+	id: string;
+	prompt: string;
+	createdAt: Date;
+};
+
+type HermesTurnBuilderState = {
+	pendingUser: PendingUserState | null;
+	pendingToolCalls: HermesToolCall[];
+	syntheticIndex: number;
+};
+
+type SessionSyncState = HermesTurnBuilderState & {
+	signature: string;
+	lastMessageId: number;
+};
+
 type SyncSessionResult = {
 	insertedRequests: number;
 	messageCount: number;
+	nextState: SessionSyncState;
 };
 
 type SyncCycleStats = {
@@ -113,7 +130,31 @@ const messagesBySessionQuery = hermesDb.query(
 	 ORDER BY id ASC`
 );
 
-const sessionSignatures = new Map<string, string>();
+const messagesBySessionSinceIdQuery = hermesDb.query(
+	`SELECT id, role, content, tool_call_id, tool_calls, finish_reason, timestamp
+	 FROM messages
+	 WHERE session_id = ?
+	   AND id > ?
+	 ORDER BY id ASC`
+);
+
+const sessionStates = new Map<string, SessionSyncState>();
+
+function createTurnBuilderState(): HermesTurnBuilderState {
+	return {
+		pendingUser: null,
+		pendingToolCalls: [],
+		syntheticIndex: 0
+	};
+}
+
+function createSessionSyncState(signature: string): SessionSyncState {
+	return {
+		signature,
+		lastMessageId: 0,
+		...createTurnBuilderState()
+	};
+}
 
 function toDate(seconds: number | null | undefined): Date {
 	return new Date((seconds ?? 0) * 1000);
@@ -273,13 +314,36 @@ function mergeToolOutput(call: HermesToolCall, content: string | null, timestamp
 	};
 }
 
-function buildCompletedTurns(sessionId: string, messages: HermesMessageRow[]): CompletedTurn[] {
+function cloneToolCall(call: HermesToolCall): HermesToolCall {
+	return {
+		...call,
+		fileEdits: [...call.fileEdits]
+	};
+}
+
+function cloneTurnBuilderState(state: HermesTurnBuilderState): HermesTurnBuilderState {
+	return {
+		pendingUser: state.pendingUser ? { ...state.pendingUser } : null,
+		pendingToolCalls: state.pendingToolCalls.map(cloneToolCall),
+		syntheticIndex: state.syntheticIndex
+	};
+}
+
+function buildCompletedTurns(
+	sessionId: string,
+	messages: HermesMessageRow[],
+	initialState: HermesTurnBuilderState = createTurnBuilderState()
+): {
+	completedTurns: CompletedTurn[];
+	nextState: HermesTurnBuilderState;
+	lastMessageId: number;
+} {
 	const completed: CompletedTurn[] = [];
-	let pendingUser: { id: string; prompt: string; createdAt: Date } | null = null;
-	let pendingToolCalls: HermesToolCall[] = [];
-	let syntheticIndex = 0;
+	let lastMessageId = 0;
+	let { pendingUser, pendingToolCalls, syntheticIndex } = cloneTurnBuilderState(initialState);
 
 	for (const message of messages) {
+		lastMessageId = message.id;
 		const timestamp = toDate(message.timestamp);
 		const content = message.content?.trim() ?? '';
 
@@ -330,7 +394,7 @@ function buildCompletedTurns(sessionId: string, messages: HermesMessageRow[]): C
 			completedAt: timestamp,
 			finishReason,
 			partId: `hermes-part-${message.id}`,
-			tools: [...pendingToolCalls]
+			tools: pendingToolCalls.map(cloneToolCall)
 		});
 
 		pendingUser = null;
@@ -338,12 +402,15 @@ function buildCompletedTurns(sessionId: string, messages: HermesMessageRow[]): C
 		syntheticIndex += 1;
 	}
 
-	return completed;
-}
-
-async function getTurnIdByUserMessageId(userMessageId: string): Promise<number | null> {
-	const row = await db.select({ id: turns.id }).from(turns).where(eq(turns.userMessageId, userMessageId)).limit(1);
-	return row[0]?.id ?? null;
+	return {
+		completedTurns: completed,
+		nextState: {
+			pendingUser,
+			pendingToolCalls,
+			syntheticIndex
+		},
+		lastMessageId
+	};
 }
 
 async function getTurnIdsByUserMessageId(sessionId: string): Promise<Map<string, number>> {
@@ -477,16 +544,6 @@ async function ensureToolAndFileTelemetry(sessionId: string, turnId: number, too
 			);
 		}
 	}
-}
-
-async function requestExists(messageId: string): Promise<boolean> {
-	const rows = await db.execute(sql`
-		SELECT 1
-		FROM requests
-		WHERE message_id = ${messageId}
-		LIMIT 1
-	`);
-	return rows.length > 0;
 }
 
 async function getSyncedTokenTotals(sessionId: string): Promise<{
@@ -708,11 +765,25 @@ async function insertRequest(
 async function syncSession(session: HermesSessionRow): Promise<SyncSessionResult> {
 	const providerId = normalizeProviderId(session);
 	const modelId = normalizeModelId(session.model ?? 'unknown');
-	const messages = messagesBySessionQuery.all(session.id) as HermesMessageRow[];
+	const signature = getSessionSignature(session);
+	const previousState = sessionStates.get(session.id) ?? createSessionSyncState(signature);
+	const messages =
+		previousState.lastMessageId > 0
+			? (messagesBySessionSinceIdQuery.all(session.id, previousState.lastMessageId) as HermesMessageRow[])
+			: (messagesBySessionQuery.all(session.id) as HermesMessageRow[]);
+	const { completedTurns, nextState: turnBuilderState, lastMessageId } = buildCompletedTurns(
+		session.id,
+		messages,
+		previousState
+	);
+	const nextState: SessionSyncState = {
+		signature,
+		lastMessageId: lastMessageId > 0 ? lastMessageId : previousState.lastMessageId,
+		...turnBuilderState
+	};
 
-	const completedTurns = buildCompletedTurns(session.id, messages);
 	if (completedTurns.length === 0) {
-		return { insertedRequests: 0, messageCount: messages.length };
+		return { insertedRequests: 0, messageCount: messages.length, nextState };
 	}
 
 	const syncedOrInsertedRequestIds = new Set(
@@ -786,11 +857,6 @@ async function syncSession(session: HermesSessionRow): Promise<SyncSessionResult
 			tokensCacheWrite: 0
 		};
 
-		if (await requestExists(turn.requestMessageId)) {
-			syncedOrInsertedRequestIds.add(turn.requestMessageId);
-			continue;
-		}
-
 		await upsertTurn(session.id, providerId, modelId, turn, tokens);
 		await insertRequest(session, providerId, modelId, turn, tokens);
 		syncedOrInsertedRequestIds.add(turn.requestMessageId);
@@ -805,7 +871,7 @@ async function syncSession(session: HermesSessionRow): Promise<SyncSessionResult
 		await ensureToolAndFileTelemetry(session.id, turnId, turn.tools);
 	}
 
-	return { insertedRequests, messageCount: messages.length };
+	return { insertedRequests, messageCount: messages.length, nextState };
 }
 
 async function syncAllSessions(): Promise<SyncCycleStats> {
@@ -819,13 +885,14 @@ async function syncAllSessions(): Promise<SyncCycleStats> {
 
 	for (const session of sessionsToSync) {
 		const signature = getSessionSignature(session);
-		if (sessionSignatures.get(session.id) === signature) {
+		const previousState = sessionStates.get(session.id);
+		if (previousState?.signature === signature) {
 			skippedSessions += 1;
 			continue;
 		}
 
 		const result = await syncSession(session);
-		sessionSignatures.set(session.id, signature);
+		sessionStates.set(session.id, result.nextState);
 		changedSessions += 1;
 		scannedMessages += result.messageCount;
 		insertedRequests += result.insertedRequests;
