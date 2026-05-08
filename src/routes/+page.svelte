@@ -1451,19 +1451,21 @@
 
 	{#if activeTab === 'models'}
 	<!-- Model Usage Table -->
-	<section class="panel reveal" style="animation-delay: 360ms; margin-bottom: 1.5rem;">
-		<div class="section-header">
-			<h2 class="section-title">model usage</h2>
-			<div class="range-buttons">
+	<section class="panel reveal" style="animation-delay: 360ms; margin-bottom: 1.5rem; padding: 0;">
+		<div style="display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 1rem; padding: 1.25rem 1.5rem 1rem; border-bottom: 1px solid var(--color-grid-line-bright);">
+			<div>
+				<div class="section-title" style="margin-bottom: 0.5rem;">model usage</div>
+				<div class="section-subtitle" style="white-space: normal;">
+					{modelPerformanceRange === 'all' ? 'all time' : 'last ' + modelPerformanceRange} · ranked by share of total tokens · {modelsUsageData.length.toLocaleString()} models
+				</div>
+			</div>
+			<div class="range-buttons" aria-label="Model usage time range">
 				{#each ['all', 'day', 'week', 'month'] as r}
 					<button type="button" class="range-btn {modelPerformanceRange === (r as TimeRange) ? 'active' : ''}" onclick={() => (modelPerformanceRange = r as TimeRange)}>
 						{r.toUpperCase()}
 					</button>
 				{/each}
 			</div>
-		</div>
-		<div class="section-subtitle" style="margin-bottom: 1rem;">
-			{modelPerformanceRange === 'all' ? 'all time' : 'last ' + modelPerformanceRange} • ranked by share of total tokens
 		</div>
 		{#if modelsDataLoading || modelPerformanceLoading}
 			{@render loadingState()}
@@ -1473,34 +1475,41 @@
 				fetchModelPerformance();
 			})}
 		{:else if modelsData && modelsData.length > 0}
-			<div class="table-container">
+			<div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-bottom: 1px solid var(--color-grid-line);">
+				{#each modelsUsageData.slice(0, 4) as model}
+					<div style="padding: 0.9rem 1.5rem; border-right: 1px solid var(--color-grid-line);">
+						<div class="font-mono" style="font-size: 0.72rem; color: var(--color-text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{model.display_name}</div>
+						<div style="margin-top: 0.35rem; font-family: var(--font-mono); font-size: 1rem; color: var(--color-accent);">{formatPercent(getTotalModelTokens(model), modelUsageTotalTokens)}</div>
+						<div class="section-subtitle" style="margin-top: 0.2rem;">{formatNumber(getTotalModelTokens(model))} tokens</div>
+					</div>
+				{/each}
+			</div>
+			<div class="table-container" style="border: 0;">
 				<table>
 					<thead>
 						<tr>
-							<th>model</th>
+							<th style="padding-left: 1.5rem;">model</th>
 							<th>requests</th>
-							<th>total tokens</th>
-							<th>effective input</th>
-							<th>effective output</th>
+							<th>tokens</th>
+							<th>input</th>
+							<th>output</th>
 							<th>share</th>
-							<th>avg duration</th>
-							<th>cost</th>
+							<th>duration</th>
+							<th style="padding-right: 1.5rem;">cost</th>
 						</tr>
 					</thead>
 					<tbody>
 						{#each modelsUsageData as model (model.model_id)}
 							{@const avgDuration = modelPerformance?.find((d) => d.model_id === model.model_id)}
 							<tr>
-								<td class="font-mono text-sm">
-									{model.display_name}
-								</td>
+								<td class="font-mono text-sm" style="padding-left: 1.5rem; color: var(--color-text-primary);">{model.display_name}</td>
 								<td>{model.request_count.toLocaleString()}</td>
 								<td>{formatNumber(getTotalModelTokens(model))}</td>
 								<td class="text-accent">{formatNumber(getEffectiveInputTokens(model))}</td>
 								<td class="text-primary">{formatNumber(getEffectiveOutputTokens(model))}</td>
 								<td>{formatPercent(getTotalModelTokens(model), modelUsageTotalTokens)}</td>
 								<td>{avgDuration ? formatDuration(avgDuration.avg_duration_ms) : '-'}</td>
-								<td class="text-accent font-medium">{formatCost(model.cost_usd)}</td>
+								<td class="text-accent font-medium" style="padding-right: 1.5rem;">{formatCost(model.cost_usd)}</td>
 							</tr>
 						{/each}
 					</tbody>
