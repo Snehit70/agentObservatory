@@ -1,5 +1,4 @@
 import { drizzle } from "drizzle-orm/postgres-js";
-import postgres from "postgres";
 import { eq } from "drizzle-orm";
 import { join } from "path";
 import { readdir } from "fs/promises";
@@ -10,6 +9,7 @@ import {
   doublePrecision,
   timestamp,
 } from "drizzle-orm/pg-core";
+import { createWorkerClient } from "../src/lib/server/postgres-client";
 
 const DATABASE_URL =
   process.env.DATABASE_URL || "postgres://postgres@localhost/opencode_dashboard";
@@ -26,7 +26,7 @@ const sessions = pgTable("sessions", {
   totalTokensOutput: integer("total_tokens_output").default(0),
 });
 
-const client = postgres(DATABASE_URL);
+const client = createWorkerClient(DATABASE_URL);
 const db = drizzle(client);
 
 const OPENCODE_STORAGE_PATH = join(

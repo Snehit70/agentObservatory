@@ -3,11 +3,11 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import 'dotenv/config';
 import { drizzle } from 'drizzle-orm/postgres-js';
-import postgres from 'postgres';
 import * as schema from '../src/lib/db/schema';
 import { sql } from "drizzle-orm";
+import { createWorkerClient } from '../src/lib/server/postgres-client';
 
-const client = postgres(process.env.DATABASE_URL!);
+const client = createWorkerClient(process.env.DATABASE_URL!);
 const db = drizzle(client, { schema });
 const { requests, dailySummary, turns, sessions: sessionsTable } = schema;
 

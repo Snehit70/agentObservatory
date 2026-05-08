@@ -26,11 +26,11 @@ import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
 import 'dotenv/config';
 import { drizzle } from 'drizzle-orm/postgres-js';
-import postgres from 'postgres';
 import * as schema from '../src/lib/db/schema';
 import { sql } from "drizzle-orm";
+import { createWorkerClient } from '../src/lib/server/postgres-client';
 
-const client = postgres(process.env.DATABASE_URL!);
+const client = createWorkerClient(process.env.DATABASE_URL!);
 const db = drizzle(client, { schema });
 const { requests, dailySummary, sessions, turns, toolCalls, fileEdits, assistantTextParts } = schema;
 
