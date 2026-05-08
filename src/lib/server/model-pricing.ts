@@ -48,6 +48,9 @@ const FALLBACK_COSTS: Record<string, ModelCost> = {
 	'gemini-2.5-flash': { input: 0.3, output: 2.5 },
 	// OpenAI GPT-5 (verified Mar 2026)
 	'gpt-5.4': { input: 2.5, output: 15 },
+	'gpt-5.4-mini': { input: 1.25, output: 10 },
+	'gpt-5.4-nano': { input: 0.25, output: 2 },
+	'gpt-5.5': { input: 3, output: 18 },
 	'gpt-5.3': { input: 3, output: 15 },
 	'gpt-5.3-codex': { input: 3, output: 15 },
 	'gpt-5.2-codex': { input: 1.75, output: 14 },
@@ -109,6 +112,7 @@ export const normalizeModelId = (modelId: string): string => {
 	if (m.includes('gemini-2.5-pro') || m.includes('gemini-2-5-pro')) return 'gemini-2.5-pro';
 	if (m.includes('gemini-2.5-flash') || m.includes('gemini-2-5-flash')) return 'gemini-2.5-flash';
 	if (m.includes('gpt-5.4') || m.includes('gpt-5-4')) return 'gpt-5.4';
+	if (m.includes('gpt-5.5') || m.includes('gpt-5-5')) return 'gpt-5.5';
 	if (m.includes('gpt-5.3-codex') || m.includes('gpt-5-3-codex')) return 'gpt-5.3-codex';
 	if (m.includes('gpt-5.3') || m.includes('gpt-5-3')) return 'gpt-5.3';
 	if (m.includes('gpt-5.2-codex') || m.includes('gpt-5-2-codex')) return 'gpt-5.2-codex';
@@ -138,6 +142,9 @@ const MODEL_DISPLAY_NAMES: Record<string, string> = {
 	'gemini-2.5-pro': 'Gemini 2.5 Pro',
 	'gemini-2.5-flash': 'Gemini 2.5 Flash',
 	'gpt-5.4': 'GPT-5.4',
+	'gpt-5.4-mini': 'GPT-5.4 Mini',
+	'gpt-5.4-nano': 'GPT-5.4 Nano',
+	'gpt-5.5': 'GPT-5.5',
 	'gpt-5.3': 'GPT-5.3',
 	'gpt-5.3-codex': 'GPT-5.3 Codex',
 	'gpt-5.2-codex': 'GPT-5.2 Codex',

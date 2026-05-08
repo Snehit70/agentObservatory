@@ -890,6 +890,9 @@
 			return bShare - aShare;
 		});
 	});
+	let modelUsageTotalTokens = $derived(
+		(modelsData ?? []).reduce((sum, model) => sum + getTotalModelTokens(model), 0)
+	);
 	let costPer1MTokens = $derived.by(() => {
 		if (!totals || totalTokens <= 0) return 0;
 		return totals.total_cost / (totalTokens / 1_000_000);
@@ -1467,7 +1470,7 @@
 								<td>{formatNumber(getTotalModelTokens(model))}</td>
 								<td class="text-accent">{formatNumber(getEffectiveInputTokens(model))}</td>
 								<td class="text-primary">{formatNumber(getEffectiveOutputTokens(model))}</td>
-								<td>{formatPercent(getTotalModelTokens(model), totalTokens)}</td>
+								<td>{formatPercent(getTotalModelTokens(model), modelUsageTotalTokens)}</td>
 								<td>{avgDuration ? formatDuration(avgDuration.avg_duration_ms) : '-'}</td>
 								<td class="text-accent font-medium">{formatCost(model.cost_usd)}</td>
 							</tr>
