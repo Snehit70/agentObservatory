@@ -68,6 +68,12 @@ body {
 	background: var(--color-bg-hover);
 }
 
+.top-nav-link.active {
+	color: var(--color-text-primary);
+	border-color: var(--color-accent-dim);
+	background: var(--color-bg-elevated);
+}
+
 @media (min-width: 640px) {
 	.page-container {
 		padding: 1.5rem;

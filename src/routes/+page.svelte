@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { browser } from '$app/environment';
 	import { untrack } from 'svelte';
 	import AreaChart from '$lib/components/AreaChart.svelte';
 	import BarChart from '$lib/components/BarChart.svelte';
@@ -318,7 +319,34 @@
 	let currentTime = $state(new Date().toLocaleTimeString());
 
 	type TabId = 'overview' | 'models' | 'activity' | 'code' | 'tools';
-	let activeTab = $state<TabId>('overview');
+	const TAB_STORAGE_KEY = 'agent-observatory.dashboard-tab';
+	const tabIds = ['overview', 'models', 'activity', 'code', 'tools'] as const;
+	const isTabId = (value: string | null): value is TabId =>
+		!!value && tabIds.includes(value as TabId);
+
+	function getInitialTab(): TabId {
+		if (!browser) return 'overview';
+		const urlTab = new URLSearchParams(window.location.search).get('tab');
+		if (isTabId(urlTab)) return urlTab;
+		const storedTab = window.localStorage.getItem(TAB_STORAGE_KEY);
+		return isTabId(storedTab) ? storedTab : 'overview';
+	}
+
+	let activeTab = $state<TabId>(getInitialTab());
+
+	function setActiveTab(tab: TabId) {
+		activeTab = tab;
+		if (!browser) return;
+
+		window.localStorage.setItem(TAB_STORAGE_KEY, tab);
+		const url = new URL(window.location.href);
+		if (tab === 'overview') {
+			url.searchParams.delete('tab');
+		} else {
+			url.searchParams.set('tab', tab);
+		}
+		window.history.replaceState(window.history.state, '', url);
+	}
 
 	// Fetch functions
 	async function fetchTotals() {
@@ -970,31 +998,31 @@
 	<nav class="tab-nav">
 		<button
 			class="tab-btn {activeTab === 'overview' ? 'active' : ''}"
-			onclick={() => activeTab = 'overview'}
+			onclick={() => setActiveTab('overview')}
 		>
 			Overview
 		</button>
 		<button
 			class="tab-btn {activeTab === 'models' ? 'active' : ''}"
-			onclick={() => activeTab = 'models'}
+			onclick={() => setActiveTab('models')}
 		>
 			Models
 		</button>
 		<button
 			class="tab-btn {activeTab === 'activity' ? 'active' : ''}"
-			onclick={() => activeTab = 'activity'}
+			onclick={() => setActiveTab('activity')}
 		>
 			Activity
 		</button>
 		<button
 			class="tab-btn {activeTab === 'code' ? 'active' : ''}"
-			onclick={() => activeTab = 'code'}
+			onclick={() => setActiveTab('code')}
 		>
 			Code
 		</button>
 		<button
 			class="tab-btn {activeTab === 'tools' ? 'active' : ''}"
-			onclick={() => activeTab = 'tools'}
+			onclick={() => setActiveTab('tools')}
 		>
 			Tools
 		</button>
