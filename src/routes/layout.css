@@ -817,6 +817,32 @@ tbody tr:hover {
 	z-index: 1;
 }
 
+.heatmap-band-panel {
+	padding: 0;
+	overflow: hidden;
+}
+
+.heatmap-band-head {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	gap: 1rem;
+	align-items: end;
+	padding: 1rem 1.25rem 0.75rem;
+	border-bottom: 1px solid var(--color-grid-line-bright);
+}
+
+.heatmap-band-body {
+	padding: 0.85rem 1rem 1rem;
+}
+
+.heatmap-band-stat {
+	font-family: var(--font-mono);
+	font-size: 0.66rem;
+	color: var(--color-accent-2);
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+}
+
 .error-rate-list {
 	display: flex;
 	flex-direction: column;

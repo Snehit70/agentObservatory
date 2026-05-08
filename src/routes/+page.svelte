@@ -1572,39 +1572,39 @@
 
 	<!-- Activity Heatmap & Error Rate -->
 	<section class="charts-grid">
-		<div class="panel reveal" style="animation-delay: 410ms;">
-			<h2 class="section-title">activity heatmap</h2>
+		<div class="panel reveal heatmap-band-panel" style="animation-delay: 410ms;">
+			<div class="heatmap-band-head">
+				<div>
+					<h2 class="section-title">activity heatmap</h2>
+					<div class="section-subtitle" style="white-space: normal;">weekly activity, grouped by day and hour</div>
+				</div>
+				<div class="heatmap-band-stat">request density</div>
+			</div>
 			{#if activityHeatmapLoading}
 				{@render loadingState()}
 			{:else if activityHeatmapError}
 				{@render errorState(activityHeatmapError, fetchActivityHeatmap)}
 			{:else if activityHeatmap && activityHeatmap.length > 0}
 				{@const maxCount = Math.max(...activityHeatmap.map((d) => d.request_count))}
-				<div class="heatmap-container">
-					<div class="heatmap-labels">
-						<div class="heatmap-label"></div>
-						{#each Array(24) as _, h}
-							{#if h % 3 === 0}
-								<div class="heatmap-hour-label">{h}</div>
-							{:else}
-								<div class="heatmap-hour-label"></div>
-							{/if}
-						{/each}
-					</div>
-					{#each dayNames as day, dayIdx}
-						<div class="heatmap-row">
-							<div class="heatmap-day-label">{day}</div>
-							{#each Array(24) as _, hour}
-								{@const cell = activityHeatmap.find((d) => d.day_of_week === dayIdx && d.hour === hour)}
-								{@const intensity = cell ? cell.request_count / maxCount : 0}
-								<div
-									class="heatmap-cell"
-									style="background-color: rgba(59, 130, 246, {intensity * 0.9 + 0.1});"
-									title="{day} {hour}:00 - {cell?.request_count ?? 0} requests"
-								></div>
+				<div class="heatmap-band-body">
+					<div class="heatmap-container">
+						<div class="heatmap-labels">
+							<div class="heatmap-label"></div>
+							{#each Array(24) as _, h}
+								{#if h % 3 === 0}<div class="heatmap-hour-label">{h}</div>{:else}<div class="heatmap-hour-label"></div>{/if}
 							{/each}
 						</div>
-					{/each}
+						{#each dayNames as day, dayIdx}
+							<div class="heatmap-row">
+								<div class="heatmap-day-label">{day}</div>
+								{#each Array(24) as _, hour}
+									{@const cell = activityHeatmap.find((d) => d.day_of_week === dayIdx && d.hour === hour)}
+									{@const intensity = cell ? cell.request_count / maxCount : 0}
+									<div class="heatmap-cell" style="background-color: rgba(59, 130, 246, {intensity * 0.9 + 0.1});" title="{day} {hour}:00 - {cell?.request_count ?? 0} requests"></div>
+								{/each}
+							</div>
+						{/each}
+					</div>
 				</div>
 			{:else}
 				<div class="text-tertiary text-sm py-8 text-center">No activity data yet</div>
