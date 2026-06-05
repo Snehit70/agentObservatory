@@ -1384,39 +1384,44 @@ export const getCacheHitRate = query(v.optional(v.number()), async (days?: numbe
 });
 
 export const getSessionDepthStats = query(async () => {
-	const allTurnsBySession = await db
-		.select({
-			session_id: turns.sessionId,
-			agent: turns.agent,
-			turn_count: count()
-		})
-		.from(turns)
-		.groupBy(turns.sessionId, turns.agent);
+	const backgroundAgents = ['explore', 'librarian', 'multimodal-looker', 'sisyphus-junior'];
 
-	const backgroundAgents = new Set(['explore', 'librarian', 'multimodal-looker', 'sisyphus-junior']);
-	
-	const sessionMap = new Map<string, number>();
-	
-	for (const row of allTurnsBySession) {
-		if (row.agent && backgroundAgents.has(row.agent)) {
-			continue;
-		}
-		const current = sessionMap.get(row.session_id) || 0;
-		sessionMap.set(row.session_id, current + Number(row.turn_count));
-	}
-	
-	const turnCounts = Array.from(sessionMap.values())
-		.filter(count => count > 0)
+	const rows = await db.execute(sql`
+		WITH foreground_counts AS (
+			SELECT
+				s.session_id,
+				COALESCE(
+					COUNT(t.id) FILTER (
+						WHERE t.agent IS NULL OR t.agent NOT IN (${sql.join(backgroundAgents, sql`, `)})
+					),
+					0
+				)::int AS turn_count
+			FROM sessions s
+			LEFT JOIN turns t ON t.session_id = s.session_id
+			GROUP BY s.session_id
+		)
+		SELECT turn_count FROM foreground_counts
+	`);
+
+	const allTurnCounts = (rows as unknown as { turn_count: number }[])
+		.map((row) => Number(row.turn_count))
 		.sort((a, b) => a - b);
+	const turnCounts = allTurnCounts.filter(count => count > 0);
+	const zeroTurnCount = allTurnCounts.filter(count => count === 0).length;
 	
 	if (turnCounts.length === 0) {
 		return {
 			total_sessions: 0,
+			raw_session_count: allTurnCounts.length,
 			total_turns: 0,
 			avg_turns: 0,
 			median_turns: 0,
+			p90_turns: 0,
+			p95_turns: 0,
+			p99_turns: 0,
 			max_turns: 0,
 			min_turns: 0,
+			zero_turn_count: zeroTurnCount,
 			single_turn_count: 0,
 			single_turn_percent: 0,
 			distribution: []
@@ -1426,6 +1431,7 @@ export const getSessionDepthStats = query(async () => {
 	const totalTurns = turnCounts.reduce((a, b) => a + b, 0);
 	const avgTurns = totalTurns / turnCounts.length;
 	const medianTurns = turnCounts[Math.floor(turnCounts.length / 2)];
+	const percentile = (p: number) => turnCounts[Math.min(turnCounts.length - 1, Math.floor(turnCounts.length * p))] ?? 0;
 	const maxTurns = turnCounts[turnCounts.length - 1];
 	const minTurns = turnCounts[0];
 	const singleTurnCount = turnCounts.filter(c => c === 1).length;
@@ -1452,11 +1458,16 @@ export const getSessionDepthStats = query(async () => {
 
 	return {
 		total_sessions: turnCounts.length,
+		raw_session_count: allTurnCounts.length,
 		total_turns: totalTurns,
 		avg_turns: Math.round(avgTurns * 10) / 10,
 		median_turns: medianTurns,
+		p90_turns: percentile(0.9),
+		p95_turns: percentile(0.95),
+		p99_turns: percentile(0.99),
 		max_turns: maxTurns,
 		min_turns: minTurns,
+		zero_turn_count: zeroTurnCount,
 		single_turn_count: singleTurnCount,
 		single_turn_percent: turnCounts.length > 0 ? singleTurnCount / turnCounts.length : 0,
 		distribution

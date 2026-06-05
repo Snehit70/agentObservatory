@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { browser } from '$app/environment';
 	import { untrack } from 'svelte';
 	import AreaChart from '$lib/components/AreaChart.svelte';
 	import BarChart from '$lib/components/BarChart.svelte';
@@ -126,11 +127,16 @@
 	};
 	type SessionDepthStats = {
 		total_sessions: number;
+		raw_session_count: number;
 		total_turns: number;
 		avg_turns: number;
 		median_turns: number;
+		p90_turns: number;
+		p95_turns: number;
+		p99_turns: number;
 		max_turns: number;
 		min_turns: number;
+		zero_turn_count: number;
 		single_turn_count: number;
 		single_turn_percent: number;
 		distribution: { label: string; count: number; percent: number }[];
@@ -318,7 +324,34 @@
 	let currentTime = $state(new Date().toLocaleTimeString());
 
 	type TabId = 'overview' | 'models' | 'activity' | 'code' | 'tools';
-	let activeTab = $state<TabId>('overview');
+	const TAB_STORAGE_KEY = 'agent-observatory.dashboard-tab';
+	const tabIds = ['overview', 'models', 'activity', 'code', 'tools'] as const;
+	const isTabId = (value: string | null): value is TabId =>
+		!!value && tabIds.includes(value as TabId);
+
+	function getInitialTab(): TabId {
+		if (!browser) return 'overview';
+		const urlTab = new URLSearchParams(window.location.search).get('tab');
+		if (isTabId(urlTab)) return urlTab;
+		const storedTab = window.localStorage.getItem(TAB_STORAGE_KEY);
+		return isTabId(storedTab) ? storedTab : 'overview';
+	}
+
+	let activeTab = $state<TabId>(getInitialTab());
+
+	function setActiveTab(tab: TabId) {
+		activeTab = tab;
+		if (!browser) return;
+
+		window.localStorage.setItem(TAB_STORAGE_KEY, tab);
+		const url = new URL(window.location.href);
+		if (tab === 'overview') {
+			url.searchParams.delete('tab');
+		} else {
+			url.searchParams.set('tab', tab);
+		}
+		window.history.replaceState(window.history.state, '', url);
+	}
 
 	// Fetch functions
 	async function fetchTotals() {
@@ -890,6 +923,9 @@
 			return bShare - aShare;
 		});
 	});
+	let modelUsageTotalTokens = $derived(
+		(modelsData ?? []).reduce((sum, model) => sum + getTotalModelTokens(model), 0)
+	);
 	let costPer1MTokens = $derived.by(() => {
 		if (!totals || totalTokens <= 0) return 0;
 		return totals.total_cost / (totalTokens / 1_000_000);
@@ -967,31 +1003,31 @@
 	<nav class="tab-nav">
 		<button
 			class="tab-btn {activeTab === 'overview' ? 'active' : ''}"
-			onclick={() => activeTab = 'overview'}
+			onclick={() => setActiveTab('overview')}
 		>
 			Overview
 		</button>
 		<button
 			class="tab-btn {activeTab === 'models' ? 'active' : ''}"
-			onclick={() => activeTab = 'models'}
+			onclick={() => setActiveTab('models')}
 		>
 			Models
 		</button>
 		<button
 			class="tab-btn {activeTab === 'activity' ? 'active' : ''}"
-			onclick={() => activeTab = 'activity'}
+			onclick={() => setActiveTab('activity')}
 		>
 			Activity
 		</button>
 		<button
 			class="tab-btn {activeTab === 'code' ? 'active' : ''}"
-			onclick={() => activeTab = 'code'}
+			onclick={() => setActiveTab('code')}
 		>
 			Code
 		</button>
 		<button
 			class="tab-btn {activeTab === 'tools' ? 'active' : ''}"
-			onclick={() => activeTab = 'tools'}
+			onclick={() => setActiveTab('tools')}
 		>
 			Tools
 		</button>
@@ -1420,19 +1456,21 @@
 
 	{#if activeTab === 'models'}
 	<!-- Model Usage Table -->
-	<section class="panel reveal" style="animation-delay: 360ms; margin-bottom: 1.5rem;">
-		<div class="section-header">
-			<h2 class="section-title">model usage</h2>
-			<div class="range-buttons">
+	<section class="panel reveal" style="animation-delay: 360ms; margin-bottom: 1.5rem; padding: 0;">
+		<div style="display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 1rem; padding: 1.25rem 1.5rem 1rem; border-bottom: 1px solid var(--color-grid-line-bright);">
+			<div>
+				<div class="section-title" style="margin-bottom: 0.5rem;">model usage</div>
+				<div class="section-subtitle" style="white-space: normal;">
+					{modelPerformanceRange === 'all' ? 'all time' : 'last ' + modelPerformanceRange} · ranked by share of total tokens · {modelsUsageData.length.toLocaleString()} models
+				</div>
+			</div>
+			<div class="range-buttons" aria-label="Model usage time range">
 				{#each ['all', 'day', 'week', 'month'] as r}
 					<button type="button" class="range-btn {modelPerformanceRange === (r as TimeRange) ? 'active' : ''}" onclick={() => (modelPerformanceRange = r as TimeRange)}>
 						{r.toUpperCase()}
 					</button>
 				{/each}
 			</div>
-		</div>
-		<div class="section-subtitle" style="margin-bottom: 1rem;">
-			{modelPerformanceRange === 'all' ? 'all time' : 'last ' + modelPerformanceRange} • ranked by share of total tokens
 		</div>
 		{#if modelsDataLoading || modelPerformanceLoading}
 			{@render loadingState()}
@@ -1442,34 +1480,41 @@
 				fetchModelPerformance();
 			})}
 		{:else if modelsData && modelsData.length > 0}
-			<div class="table-container">
+			<div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-bottom: 1px solid var(--color-grid-line);">
+				{#each modelsUsageData.slice(0, 4) as model}
+					<div style="padding: 0.9rem 1.5rem; border-right: 1px solid var(--color-grid-line);">
+						<div class="font-mono" style="font-size: 0.72rem; color: var(--color-text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{model.display_name}</div>
+						<div style="margin-top: 0.35rem; font-family: var(--font-mono); font-size: 1rem; color: var(--color-accent);">{formatPercent(getTotalModelTokens(model), modelUsageTotalTokens)}</div>
+						<div class="section-subtitle" style="margin-top: 0.2rem;">{formatNumber(getTotalModelTokens(model))} tokens</div>
+					</div>
+				{/each}
+			</div>
+			<div class="table-container" style="border: 0;">
 				<table>
 					<thead>
 						<tr>
-							<th>model</th>
+							<th style="padding-left: 1.5rem;">model</th>
 							<th>requests</th>
-							<th>total tokens</th>
-							<th>effective input</th>
-							<th>effective output</th>
+							<th>tokens</th>
+							<th>input</th>
+							<th>output</th>
 							<th>share</th>
-							<th>avg duration</th>
-							<th>cost</th>
+							<th>duration</th>
+							<th style="padding-right: 1.5rem;">cost</th>
 						</tr>
 					</thead>
 					<tbody>
 						{#each modelsUsageData as model (model.model_id)}
 							{@const avgDuration = modelPerformance?.find((d) => d.model_id === model.model_id)}
 							<tr>
-								<td class="font-mono text-sm">
-									{model.display_name}
-								</td>
+								<td class="font-mono text-sm" style="padding-left: 1.5rem; color: var(--color-text-primary);">{model.display_name}</td>
 								<td>{model.request_count.toLocaleString()}</td>
 								<td>{formatNumber(getTotalModelTokens(model))}</td>
 								<td class="text-accent">{formatNumber(getEffectiveInputTokens(model))}</td>
 								<td class="text-primary">{formatNumber(getEffectiveOutputTokens(model))}</td>
-								<td>{formatPercent(getTotalModelTokens(model), totalTokens)}</td>
+								<td>{formatPercent(getTotalModelTokens(model), modelUsageTotalTokens)}</td>
 								<td>{avgDuration ? formatDuration(avgDuration.avg_duration_ms) : '-'}</td>
-								<td class="text-accent font-medium">{formatCost(model.cost_usd)}</td>
+								<td class="text-accent font-medium" style="padding-right: 1.5rem;">{formatCost(model.cost_usd)}</td>
 							</tr>
 						{/each}
 					</tbody>
@@ -1532,79 +1577,82 @@
 
 	<!-- Activity Heatmap & Error Rate -->
 	<section class="charts-grid">
-		<div class="panel reveal" style="animation-delay: 410ms;">
-			<h2 class="section-title">activity heatmap</h2>
+		<div class="panel reveal heatmap-band-panel" style="animation-delay: 410ms;">
+			<div class="heatmap-band-head">
+				<div>
+					<h2 class="section-title">activity heatmap</h2>
+					<div class="section-subtitle" style="white-space: normal;">weekly activity, grouped by day and hour</div>
+				</div>
+				<div class="heatmap-band-stat">request density</div>
+			</div>
 			{#if activityHeatmapLoading}
 				{@render loadingState()}
 			{:else if activityHeatmapError}
 				{@render errorState(activityHeatmapError, fetchActivityHeatmap)}
 			{:else if activityHeatmap && activityHeatmap.length > 0}
 				{@const maxCount = Math.max(...activityHeatmap.map((d) => d.request_count))}
-				<div class="heatmap-container">
-					<div class="heatmap-labels">
-						<div class="heatmap-label"></div>
-						{#each Array(24) as _, h}
-							{#if h % 3 === 0}
-								<div class="heatmap-hour-label">{h}</div>
-							{:else}
-								<div class="heatmap-hour-label"></div>
-							{/if}
-						{/each}
-					</div>
-					{#each dayNames as day, dayIdx}
-						<div class="heatmap-row">
-							<div class="heatmap-day-label">{day}</div>
-							{#each Array(24) as _, hour}
-								{@const cell = activityHeatmap.find((d) => d.day_of_week === dayIdx && d.hour === hour)}
-								{@const intensity = cell ? cell.request_count / maxCount : 0}
-								<div
-									class="heatmap-cell"
-									style="background-color: rgba(59, 130, 246, {intensity * 0.9 + 0.1});"
-									title="{day} {hour}:00 - {cell?.request_count ?? 0} requests"
-								></div>
+				<div class="heatmap-band-body">
+					<div class="heatmap-container">
+						<div class="heatmap-labels">
+							<div class="heatmap-label"></div>
+							{#each Array(24) as _, h}
+								{#if h % 3 === 0}<div class="heatmap-hour-label">{h}</div>{:else}<div class="heatmap-hour-label"></div>{/if}
 							{/each}
 						</div>
-					{/each}
+						{#each dayNames as day, dayIdx}
+							<div class="heatmap-row">
+								<div class="heatmap-day-label">{day}</div>
+								{#each Array(24) as _, hour}
+									{@const cell = activityHeatmap.find((d) => d.day_of_week === dayIdx && d.hour === hour)}
+									{@const intensity = cell ? cell.request_count / maxCount : 0}
+									<div class="heatmap-cell" style="background-color: rgba(59, 130, 246, {intensity * 0.9 + 0.1});" title="{day} {hour}:00 - {cell?.request_count ?? 0} requests"></div>
+								{/each}
+							</div>
+						{/each}
+					</div>
 				</div>
 			{:else}
 				<div class="text-tertiary text-sm py-8 text-center">No activity data yet</div>
 			{/if}
 		</div>
 
-		<div class="panel reveal" style="animation-delay: 420ms;">
-			<h2 class="section-title">error rate by model</h2>
+		<div class="panel reveal error-model-board error-model-board-interval" style="animation-delay: 420ms;">
+			<div class="error-model-head">
+				<div>
+					<h2 class="section-title">error rate confidence</h2>
+					<div class="error-model-subtitle">observed rate with a 95% normal interval from tool-call count</div>
+				</div>
+				<div class="error-model-scale">0% <span>5%</span> <span>10%</span> 15%</div>
+			</div>
 			{#if errorRateByModelLoading}
 				{@render loadingState()}
 			{:else if errorRateByModelError}
 				{@render errorState(errorRateByModelError, fetchErrorRateByModel)}
 			{:else if errorRateByModel && errorRateByModel.length > 0}
-				{@const modelsWithErrors = errorRateByModel.filter((m) => m.failed_tool_calls > 0).sort((a, b) => b.error_rate - a.error_rate).slice(0, 8)}
-				{#if modelsWithErrors.length > 0}
-					<div class="error-rate-list">
-						{#each modelsWithErrors as model (model.model_id)}
-							<div class="error-rate-item">
-								<div class="error-rate-model">{model.display_name}</div>
-								<div class="error-rate-bar-container">
-									<div
-										class="error-rate-bar"
-										style="width: {Math.min(model.error_rate * 100, 100)}%;"
-									></div>
-								</div>
-								<div class="error-rate-value">{(model.error_rate * 100).toFixed(1)}%</div>
-								<div class="error-rate-count">{model.failed_tool_calls} fails</div>
+				{@const intervalModels = errorRateByModel.filter((m) => m.failed_tool_calls > 0).sort((a, b) => b.error_rate - a.error_rate).slice(0, 8)}
+				<div class="error-interval-list">
+					{#each intervalModels as model (model.model_id)}
+						{@const se = Math.sqrt((model.error_rate * (1 - model.error_rate)) / Math.max(model.total_tool_calls, 1))}
+						{@const low = Math.max(0, model.error_rate - 1.96 * se)}
+						{@const high = Math.min(0.15, model.error_rate + 1.96 * se)}
+						<div class="error-interval-row">
+							<div class="error-interval-name">{model.display_name}</div>
+							<div class="error-interval-track">
+								<div class="error-interval-band" style="left: {(low / 0.15) * 100}%; width: {Math.max(((high - low) / 0.15) * 100, 1)}%"></div>
+								<div class="error-interval-dot" style="left: {(Math.min(model.error_rate, 0.15) / 0.15) * 100}%"></div>
 							</div>
-						{/each}
-					</div>
-				{:else}
-					<div class="text-tertiary text-sm py-8 text-center">No errors recorded</div>
-				{/if}
+							<div class="error-interval-rate">{(model.error_rate * 100).toFixed(1)}%</div>
+							<div class="error-interval-n">n={model.total_tool_calls}</div>
+						</div>
+					{/each}
+				</div>
 			{:else}
 				<div class="text-tertiary text-sm py-8 text-center">No data available</div>
 			{/if}
 		</div>
 	</section>
 
-	<!-- Session Depth Distribution -->
+
 	<section class="panel reveal" style="animation-delay: 430ms; margin-bottom: 1.5rem;">
 		<h2 class="section-title">session depth distribution</h2>
 		{#if sessionDepthLoading}
@@ -1655,6 +1703,7 @@
 			<div class="text-tertiary text-sm py-8 text-center">No session data available</div>
 		{/if}
 	</section>
+
 	{/if}
 
 	{#if activeTab === 'tools'}

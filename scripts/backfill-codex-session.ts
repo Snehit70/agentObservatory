@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
-import postgres from 'postgres';
 import 'dotenv/config';
+import { createWorkerClient } from '../src/lib/server/postgres-client';
 
 async function main() {
   const filePath = process.argv[2];
@@ -9,7 +9,7 @@ async function main() {
     throw new Error('Usage: bun run scripts/backfill-codex-session.ts <jsonl-file> <session-id>');
   }
 
-  const sql = postgres(process.env.DATABASE_URL!);
+  const sql = createWorkerClient(process.env.DATABASE_URL!);
   const content = await readFile(filePath, 'utf8');
   const lines = content.split('\n').filter((l) => l.trim().length > 0);
 

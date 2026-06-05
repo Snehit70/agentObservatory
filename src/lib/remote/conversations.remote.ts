@@ -25,9 +25,28 @@ export const getConversations = query(async () => {
 		.orderBy(desc(sessions.lastRequestAt))
 		.limit(200);
 
+	const sessionIds = result.map((s) => s.session_id);
+	const turnAgentRows = sessionIds.length
+		? await db
+				.select({
+					session_id: turns.sessionId,
+					agent: turns.agent
+				})
+				.from(turns)
+				.where(inArray(turns.sessionId, sessionIds))
+				.orderBy(desc(turns.createdAt))
+		: [];
+
+	const latestAgentBySession = new Map<string, string | null>();
+	for (const row of turnAgentRows) {
+		if (latestAgentBySession.has(row.session_id)) continue;
+		latestAgentBySession.set(row.session_id, row.agent ?? null);
+	}
+
 	return result.map((s) => ({
 		session_id: s.session_id,
 		title: s.title ?? null,
+		agent: latestAgentBySession.get(s.session_id) ?? null,
 		project_dir: s.project_dir ?? null,
 		first_request_at: toIso(s.first_request_at),
 		last_request_at: toIso(s.last_request_at),

@@ -1,10 +1,10 @@
 import { drizzle } from 'drizzle-orm/postgres-js';
-import postgres from 'postgres';
 import { toolCalls, fileEdits } from '../src/lib/db/schema';
 import { inArray } from 'drizzle-orm';
+import { createWorkerClient } from '../src/lib/server/postgres-client';
 
 const DATABASE_URL = process.env.DATABASE_URL || 'postgres://postgres@localhost:5432/opencode_dashboard';
-const client = postgres(DATABASE_URL);
+const client = createWorkerClient(DATABASE_URL);
 const db = drizzle(client);
 
 const getExtension = (filePath: string): string | null => {

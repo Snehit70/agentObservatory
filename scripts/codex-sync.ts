@@ -26,11 +26,11 @@ import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
 import 'dotenv/config';
 import { drizzle } from 'drizzle-orm/postgres-js';
-import postgres from 'postgres';
 import * as schema from '../src/lib/db/schema';
 import { sql } from "drizzle-orm";
+import { createWorkerClient } from '../src/lib/server/postgres-client';
 
-const client = postgres(process.env.DATABASE_URL!);
+const client = createWorkerClient(process.env.DATABASE_URL!);
 const db = drizzle(client, { schema });
 const { requests, dailySummary, sessions, turns, toolCalls, fileEdits, assistantTextParts } = schema;
 
@@ -47,6 +47,13 @@ const sessionMeta = new Map<string, {
     cwd: string;
     cliVersion: string;
 }>();
+
+type CodexSessionMeta = {
+    modelProvider: string;
+    model: string;
+    cwd: string;
+    cliVersion: string;
+};
 
 // Turn tracking for associating token_count with turns
 const turnState = new Map<string, {
@@ -94,6 +101,43 @@ function normalizeCodexModel(model: string): string {
     // Codex model strings are already fairly normalized
     // e.g., "gpt-5.4", "gpt-5.3-codex"
     return model.toLowerCase();
+}
+
+function defaultSessionMeta(): CodexSessionMeta {
+    return {
+        modelProvider: 'openai',
+        model: 'unknown',
+        cwd: '',
+        cliVersion: ''
+    };
+}
+
+function applyMetadataEvent(meta: CodexSessionMeta, event: CodexEvent): CodexSessionMeta {
+    if (event.type !== 'session_meta' && event.type !== 'turn_context') return meta;
+    if (!event.payload || typeof event.payload !== 'object') return meta;
+
+    return {
+        modelProvider: event.payload.model_provider || meta.modelProvider,
+        model: event.payload.model || meta.model,
+        cwd: event.payload.cwd || meta.cwd,
+        cliVersion: event.payload.cli_version || meta.cliVersion
+    };
+}
+
+function readMetadataFromContent(content: string): { lineCount: number; meta: CodexSessionMeta } {
+    let meta = defaultSessionMeta();
+    const lines = content.split('\n');
+
+    for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+            meta = applyMetadataEvent(meta, JSON.parse(line) as CodexEvent);
+        } catch {
+            // Ignore malformed historical lines.
+        }
+    }
+
+    return { lineCount: lines.length, meta };
 }
 
 function getTurnMessageId(sessionId: string, timestamp: Date, prefix: string): string {
@@ -244,12 +288,7 @@ async function processSessionFile(filePath: string): Promise<void> {
         crlfDelay: Infinity
     });
 
-    let meta: typeof sessionMeta extends Map<string, infer V> ? V : never = {
-        modelProvider: 'openai',
-        model: 'gpt-5.4',
-        cwd: '',
-        cliVersion: ''
-    };
+    let meta = sessionMeta.get(sessionId) ?? defaultSessionMeta();
 
     for await (const line of rl) {
         currentLine++;
@@ -261,19 +300,11 @@ async function processSessionFile(filePath: string): Promise<void> {
 
         try {
             const event: CodexEvent = JSON.parse(line);
+            meta = applyMetadataEvent(meta, event);
+            sessionMeta.set(sessionId, meta);
+
             await processEvent(sessionId, event, meta, currentLine);
             newEvents++;
-
-            // Update metadata from session_meta events
-            if (event.type === 'session_meta' && event.payload) {
-                meta = {
-                    modelProvider: event.payload.model_provider || 'openai',
-                    model: event.payload.model || 'gpt-5.4',
-                    cwd: event.payload.cwd || '',
-                    cliVersion: event.payload.cli_version || ''
-                };
-                sessionMeta.set(sessionId, meta);
-            }
         } catch (e) {
             // Skip malformed lines
         }
@@ -671,8 +702,9 @@ async function seedExistingFiles(): Promise<void> {
             // Already synced — mark as processed to avoid re-inserting
             try {
                 const content = await readFile(filePath, 'utf-8');
-                const lineCount = content.split('\n').length;
+                const { lineCount, meta } = readMetadataFromContent(content);
                 fileProgress.set(filePath, lineCount);
+                sessionMeta.set(sessionId, meta);
                 seeded++;
             } catch {
                 // Ignore files that disappear
