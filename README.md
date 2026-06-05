@@ -4,6 +4,8 @@ Telemetry dashboard for tracking LLM agent usage across OpenCode, Codex, Claude 
 
 Agent Observatory turns raw request, session, turn, tool-call, and file-edit telemetry into an operational dashboard for cost, token volume, latency, model usage, tool reliability, coding activity, and conversation history.
 
+![Agent Observatory dashboard](docs/assets/agent-observatory-dashboard.png)
+
 ## Features
 
 - Usage overview with total cost, request count, token volume, latency, cache usage, and velocity metrics.
