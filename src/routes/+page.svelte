@@ -127,11 +127,16 @@
 	};
 	type SessionDepthStats = {
 		total_sessions: number;
+		raw_session_count: number;
 		total_turns: number;
 		avg_turns: number;
 		median_turns: number;
+		p90_turns: number;
+		p95_turns: number;
+		p99_turns: number;
 		max_turns: number;
 		min_turns: number;
+		zero_turn_count: number;
 		single_turn_count: number;
 		single_turn_percent: number;
 		distribution: { label: string; count: number; percent: number }[];
@@ -1611,40 +1616,43 @@
 			{/if}
 		</div>
 
-		<div class="panel reveal" style="animation-delay: 420ms;">
-			<h2 class="section-title">error rate by model</h2>
+		<div class="panel reveal error-model-board error-model-board-interval" style="animation-delay: 420ms;">
+			<div class="error-model-head">
+				<div>
+					<h2 class="section-title">error rate confidence</h2>
+					<div class="error-model-subtitle">observed rate with a 95% normal interval from tool-call count</div>
+				</div>
+				<div class="error-model-scale">0% <span>5%</span> <span>10%</span> 15%</div>
+			</div>
 			{#if errorRateByModelLoading}
 				{@render loadingState()}
 			{:else if errorRateByModelError}
 				{@render errorState(errorRateByModelError, fetchErrorRateByModel)}
 			{:else if errorRateByModel && errorRateByModel.length > 0}
-				{@const modelsWithErrors = errorRateByModel.filter((m) => m.failed_tool_calls > 0).sort((a, b) => b.error_rate - a.error_rate).slice(0, 8)}
-				{#if modelsWithErrors.length > 0}
-					<div class="error-rate-list">
-						{#each modelsWithErrors as model (model.model_id)}
-							<div class="error-rate-item">
-								<div class="error-rate-model">{model.display_name}</div>
-								<div class="error-rate-bar-container">
-									<div
-										class="error-rate-bar"
-										style="width: {Math.min(model.error_rate * 100, 100)}%;"
-									></div>
-								</div>
-								<div class="error-rate-value">{(model.error_rate * 100).toFixed(1)}%</div>
-								<div class="error-rate-count">{model.failed_tool_calls} fails</div>
+				{@const intervalModels = errorRateByModel.filter((m) => m.failed_tool_calls > 0).sort((a, b) => b.error_rate - a.error_rate).slice(0, 8)}
+				<div class="error-interval-list">
+					{#each intervalModels as model (model.model_id)}
+						{@const se = Math.sqrt((model.error_rate * (1 - model.error_rate)) / Math.max(model.total_tool_calls, 1))}
+						{@const low = Math.max(0, model.error_rate - 1.96 * se)}
+						{@const high = Math.min(0.15, model.error_rate + 1.96 * se)}
+						<div class="error-interval-row">
+							<div class="error-interval-name">{model.display_name}</div>
+							<div class="error-interval-track">
+								<div class="error-interval-band" style="left: {(low / 0.15) * 100}%; width: {Math.max(((high - low) / 0.15) * 100, 1)}%"></div>
+								<div class="error-interval-dot" style="left: {(Math.min(model.error_rate, 0.15) / 0.15) * 100}%"></div>
 							</div>
-						{/each}
-					</div>
-				{:else}
-					<div class="text-tertiary text-sm py-8 text-center">No errors recorded</div>
-				{/if}
+							<div class="error-interval-rate">{(model.error_rate * 100).toFixed(1)}%</div>
+							<div class="error-interval-n">n={model.total_tool_calls}</div>
+						</div>
+					{/each}
+				</div>
 			{:else}
 				<div class="text-tertiary text-sm py-8 text-center">No data available</div>
 			{/if}
 		</div>
 	</section>
 
-	<!-- Session Depth Distribution -->
+
 	<section class="panel reveal" style="animation-delay: 430ms; margin-bottom: 1.5rem;">
 		<h2 class="section-title">session depth distribution</h2>
 		{#if sessionDepthLoading}
@@ -1695,6 +1703,7 @@
 			<div class="text-tertiary text-sm py-8 text-center">No session data available</div>
 		{/if}
 	</section>
+
 	{/if}
 
 	{#if activeTab === 'tools'}

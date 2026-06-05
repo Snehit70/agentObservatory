@@ -1,7 +1,7 @@
 import { watch } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { readdir, readFile, stat } from 'node:fs/promises';
+import { readdir, stat } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import { createInterface } from 'node:readline';
 import 'dotenv/config';
@@ -17,10 +17,27 @@ const { requests, dailySummary, sessions, turns, assistantTextParts } = schema;
 const PROJECTS_DIR = join(homedir(), '.claude', 'projects');
 
 const fileProgress = new Map<string, number>();
+const args = process.argv.slice(2);
+const runOnce = args.includes('--once');
+const catchupDays = getNumberArg('--since-days', 14);
 
-function renderMessageContent(content: unknown[]): string {
+function getNumberArg(name: string, fallback: number): number {
+    const prefix = `${name}=`;
+    const match = args.find((arg) => arg.startsWith(prefix));
+    const value = Number(match?.slice(prefix.length));
+    return Number.isFinite(value) && value >= 0 ? value : fallback;
+}
+
+function renderMessageContent(content: unknown): string {
+    if (typeof content === 'string') return content.trim();
+    if (!Array.isArray(content)) return '';
+
     return content
-        .map((item) => (typeof item === 'object' && item && 'text' in item ? String((item as any).text) : ''))
+        .map((item) => {
+            if (typeof item === 'string') return item;
+            if (typeof item === 'object' && item && 'text' in item) return String((item as any).text);
+            return '';
+        })
         .join('')
         .trim();
 }
@@ -28,14 +45,29 @@ function renderMessageContent(content: unknown[]): string {
 async function seedExistingFiles(): Promise<void> {
     console.log(`[Claude] Seeding ${PROJECTS_DIR}`);
     const files = await findProjectFiles(PROJECTS_DIR);
+    const catchupCutoff = Date.now() - catchupDays * 24 * 60 * 60 * 1000;
     for (const file of files) {
         try {
-            const content = await readFile(file, 'utf-8');
-            fileProgress.set(file, content.split('\n').length);
+            const info = await stat(file);
+            if (info.mtimeMs >= catchupCutoff) {
+                await processFile(file);
+            } else {
+                fileProgress.set(file, await countFileLines(file));
+            }
         } catch {
             // ignore
         }
     }
+}
+
+async function countFileLines(filePath: string): Promise<number> {
+    let lines = 0;
+    const stream = createReadStream(filePath);
+    const rl = createInterface({ input: stream, crlfDelay: Infinity });
+    for await (const _line of rl) {
+        lines += 1;
+    }
+    return lines;
 }
 
 async function processFile(filePath: string): Promise<void> {
@@ -67,9 +99,20 @@ async function processFile(filePath: string): Promise<void> {
 }
 
 function getContentText(event: Record<string, any>): string {
-    const parts: unknown[] = event.message?.content ?? [];
-    if (!Array.isArray(parts)) return '';
-    return renderMessageContent(parts);
+    return renderMessageContent(event.message?.content ?? '');
+}
+
+function getCacheCreationTokens(usage: Record<string, any> | null | undefined): number {
+    if (!usage) return 0;
+    const direct = Number(usage.cache_creation_input_tokens ?? 0);
+    if (Number.isFinite(direct) && direct > 0) return direct;
+
+    const cacheCreation = usage.cache_creation;
+    if (!cacheCreation || typeof cacheCreation !== 'object') return 0;
+
+    const oneHour = Number(cacheCreation.ephemeral_1h_input_tokens ?? 0);
+    const fiveMinute = Number(cacheCreation.ephemeral_5m_input_tokens ?? 0);
+    return Math.max(0, (Number.isFinite(oneHour) ? oneHour : 0) + (Number.isFinite(fiveMinute) ? fiveMinute : 0));
 }
 
 async function processEvent(event: Record<string, any>): Promise<void> {
@@ -127,10 +170,11 @@ async function processEvent(event: Record<string, any>): Promise<void> {
         const tokensOutput = message.usage?.output_tokens ?? 0;
         const tokensReasoning = message.usage?.reasoning_output_tokens ?? 0;
         const tokensCacheRead = message.usage?.cache_read_input_tokens ?? 0;
+        const tokensCacheWrite = getCacheCreationTokens(message.usage);
 
         const dateStr = timestamp.toISOString().split('T')[0];
 
-        await db.insert(requests).values({
+        const insertedRequests = await db.insert(requests).values({
             messageId,
             sessionId,
             providerId,
@@ -140,56 +184,61 @@ async function processEvent(event: Record<string, any>): Promise<void> {
             tokensOutput,
             tokensReasoning,
             tokensCacheRead,
-            tokensCacheWrite: 0,
+            tokensCacheWrite,
             costUsd: 0,
             durationMs: null,
             finishReason: message.stop_reason ?? null,
             workingDir: cwd,
             createdAt: timestamp,
             completedAt: timestamp
-        }).onConflictDoNothing();
+        }).onConflictDoNothing().returning({ id: requests.id });
 
-        await db.insert(dailySummary).values({
-            date: dateStr,
-            providerId,
-            modelId,
-            requestCount: 1,
-            tokensInput,
-            tokensOutput,
-            tokensReasoning,
-            tokensCacheRead,
-            tokensCacheWrite: 0,
-            costUsd: 0
-        }).onConflictDoUpdate({
-            target: [dailySummary.date, dailySummary.providerId, dailySummary.modelId],
-            set: {
-                requestCount: sql`${dailySummary.requestCount} + 1`,
-                tokensInput: sql`${dailySummary.tokensInput} + ${tokensInput}`,
-                tokensOutput: sql`${dailySummary.tokensOutput} + ${tokensOutput}`,
-                tokensReasoning: sql`${dailySummary.tokensReasoning} + ${tokensReasoning}`,
-                tokensCacheRead: sql`${dailySummary.tokensCacheRead} + ${tokensCacheRead}`
-            }
-        });
+        const insertedRequest = insertedRequests.length > 0;
 
-        await db.insert(sessions).values({
-            sessionId,
-            projectDir: cwd,
-            title: null,
-            firstRequestAt: timestamp,
-            lastRequestAt: timestamp,
-            totalRequests: 1,
-            totalCostUsd: 0,
-            totalTokensInput: tokensInput,
-            totalTokensOutput: tokensOutput
-        }).onConflictDoUpdate({
-            target: [sessions.sessionId],
-            set: {
+        if (insertedRequest) {
+            await db.insert(dailySummary).values({
+                date: dateStr,
+                providerId,
+                modelId,
+                requestCount: 1,
+                tokensInput,
+                tokensOutput,
+                tokensReasoning,
+                tokensCacheRead,
+                tokensCacheWrite,
+                costUsd: 0
+            }).onConflictDoUpdate({
+                target: [dailySummary.date, dailySummary.providerId, dailySummary.modelId],
+                set: {
+                    requestCount: sql`${dailySummary.requestCount} + 1`,
+                    tokensInput: sql`${dailySummary.tokensInput} + ${tokensInput}`,
+                    tokensOutput: sql`${dailySummary.tokensOutput} + ${tokensOutput}`,
+                    tokensReasoning: sql`${dailySummary.tokensReasoning} + ${tokensReasoning}`,
+                    tokensCacheRead: sql`${dailySummary.tokensCacheRead} + ${tokensCacheRead}`,
+                    tokensCacheWrite: sql`${dailySummary.tokensCacheWrite} + ${tokensCacheWrite}`
+                }
+            });
+
+            await db.insert(sessions).values({
+                sessionId,
+                projectDir: cwd,
+                title: null,
+                firstRequestAt: timestamp,
                 lastRequestAt: timestamp,
-                totalRequests: sql`${sessions.totalRequests} + 1`,
-                totalTokensInput: sql`${sessions.totalTokensInput} + ${tokensInput}`,
-                totalTokensOutput: sql`${sessions.totalTokensOutput} + ${tokensOutput}`
-            }
-        });
+                totalRequests: 1,
+                totalCostUsd: 0,
+                totalTokensInput: tokensInput,
+                totalTokensOutput: tokensOutput
+            }).onConflictDoUpdate({
+                target: [sessions.sessionId],
+                set: {
+                    lastRequestAt: timestamp,
+                    totalRequests: sql`${sessions.totalRequests} + 1`,
+                    totalTokensInput: sql`${sessions.totalTokensInput} + ${tokensInput}`,
+                    totalTokensOutput: sql`${sessions.totalTokensOutput} + ${tokensOutput}`
+                }
+            });
+        }
 
         const turn = await db.select({ id: turns.id }).from(turns).where(eq(turns.sessionId, sessionId)).orderBy(desc(turns.createdAt)).limit(1);
         const turnId = turn[0]?.id ?? null;
@@ -198,7 +247,13 @@ async function processEvent(event: Record<string, any>): Promise<void> {
             await db.update(turns)
                 .set({
                     assistantMessageId: messageId,
-                    assistantText: text
+                    assistantText: text,
+                    completedAt: timestamp,
+                    tokensInput,
+                    tokensOutput,
+                    tokensReasoning,
+                    tokensCacheRead,
+                    tokensCacheWrite
                 })
                 .where(eq(turns.id, turnId));
         }
@@ -211,23 +266,25 @@ async function processEvent(event: Record<string, any>): Promise<void> {
             createdAt: timestamp
         }).onConflictDoNothing();
 
-        await client.notify('live_event', JSON.stringify({
-            type: 'request',
-            messageId,
-            sessionId,
-            providerId,
-            modelId,
-            agent: 'claude-code',
-            tokens: {
-                input: tokensInput,
-                output: tokensOutput,
-                reasoning: tokensReasoning,
-                cache: { read: tokensCacheRead, write: 0 }
-            },
-            cost: 0,
-            createdAt: timestamp.toISOString(),
-            workingDir: cwd
-        }));
+        if (insertedRequest) {
+            await client.notify('live_event', JSON.stringify({
+                type: 'request',
+                messageId,
+                sessionId,
+                providerId,
+                modelId,
+                agent: 'claude-code',
+                tokens: {
+                    input: tokensInput,
+                    output: tokensOutput,
+                    reasoning: tokensReasoning,
+                    cache: { read: tokensCacheRead, write: tokensCacheWrite }
+                },
+                cost: 0,
+                createdAt: timestamp.toISOString(),
+                workingDir: cwd
+            }));
+        }
 
         await client.notify('live_event', JSON.stringify({
             type: 'assistant.text',
@@ -277,6 +334,11 @@ function watchDirectory(dir: string): void {
 
 async function main(): Promise<void> {
     await seedExistingFiles();
+    if (runOnce) {
+        await client.end({ timeout: 5 });
+        return;
+    }
+
     const entries = await readdir(PROJECTS_DIR, { withFileTypes: true });
     for (const entry of entries) {
         if (entry.isDirectory()) {

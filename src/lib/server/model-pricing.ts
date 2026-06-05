@@ -28,6 +28,11 @@ const pricingByProviderModel = Object.entries(modelsDevData).reduce(
 );
 
 const FALLBACK_COSTS: Record<string, ModelCost> = {
+	// Claude 4.8 / 4.7 (fallback to same pricing tier as 4.6 unless provider exact pricing is available)
+	'claude-opus-4.8': { input: 5, output: 25, cache_read: 0.5, cache_write: 6.25 },
+	'claude-opus-4-8': { input: 5, output: 25, cache_read: 0.5, cache_write: 6.25 },
+	'claude-opus-4.7': { input: 5, output: 25, cache_read: 0.5, cache_write: 6.25 },
+	'claude-opus-4-7': { input: 5, output: 25, cache_read: 0.5, cache_write: 6.25 },
 	// Claude 4.6 (verified Mar 2026)
 	'claude-opus-4.6': { input: 5, output: 25, cache_read: 0.5, cache_write: 6.25 },
 	'claude-opus-4-6': { input: 5, output: 25, cache_read: 0.5, cache_write: 6.25 },
@@ -102,6 +107,8 @@ export const normalizeModelId = (modelId: string): string => {
 	m = m.replace(/-medium$/, '');
 	m = m.replace(/-low$/, '');
 
+	if (m.includes('claude-opus-4-8') || m.includes('claude-opus-4.8')) return 'claude-opus-4.8';
+	if (m.includes('claude-opus-4-7') || m.includes('claude-opus-4.7')) return 'claude-opus-4.7';
 	if (m.includes('claude-opus-4-6') || m.includes('claude-opus-4.6')) return 'claude-opus-4.6';
 	if (m.includes('claude-sonnet-4-6') || m.includes('claude-sonnet-4.6')) return 'claude-sonnet-4.6';
 	if (m.includes('claude-opus-4')) return 'claude-opus-4.5';
@@ -132,6 +139,8 @@ export const normalizeModelId = (modelId: string): string => {
 };
 
 const MODEL_DISPLAY_NAMES: Record<string, string> = {
+	'claude-opus-4.8': 'Claude Opus 4.8',
+	'claude-opus-4.7': 'Claude Opus 4.7',
 	'claude-opus-4.6': 'Claude Opus 4.6',
 	'claude-sonnet-4.6': 'Claude Sonnet 4.6',
 	'claude-opus-4.5': 'Claude Opus 4.5',
@@ -180,7 +189,7 @@ const getModelCost = (providerId?: string | null, modelId?: string | null): Mode
 	if (fallback) return fallback;
 
 	if (modelId.toLowerCase().includes('claude-opus')) {
-		return FALLBACK_COSTS['claude-opus-4.5'];
+		return FALLBACK_COSTS['claude-opus-4.8'];
 	}
 	if (modelId.toLowerCase().includes('claude-sonnet')) {
 		return FALLBACK_COSTS['claude-sonnet-4.5'];
